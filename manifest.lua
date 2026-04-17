@@ -19,6 +19,8 @@ return {
         -- FS
         "src/fs/vfs.lua",
         "src/fs/paths.lua",
+        -- Util
+        "src/util/cyrillic.lua",
         -- Auth
         "src/auth/sha256.lua",
         "src/auth/users.lua",
