@@ -203,7 +203,21 @@ function M.run()
             for pid, task in pairs(tasks) do
                 if matchEvent(task, ev)
                    and (task.filter == nil or task.filter == ev[1] or ev[1] == "terminate") then
-                    local ok, err = resumeTask(task, table.unpack(ev))
+                    -- Для задач с окном трансформируем координаты мыши в
+                    -- локальные координаты содержимого окна (с учётом chrome).
+                    local evToSend = ev
+                    if task.window and MOUSE_EVENTS[ev[1]] then
+                        local w = task.window
+                        local offX = w.hasChrome and 1 or 0
+                        local offY = w.hasChrome and 1 or 0
+                        evToSend = {
+                            ev[1], ev[2],
+                            ev[3] - w.x - offX + 1,
+                            ev[4] - w.y - offY + 1,
+                        }
+                        if ev[5] ~= nil then evToSend[5] = ev[5] end
+                    end
+                    local ok, err = resumeTask(task, table.unpack(evToSend))
                     if not ok then
                         log.error(("pid=%d crash: %s"):format(pid, tostring(err)))
                         if task.window then wm.destroy(task.window.id) end
