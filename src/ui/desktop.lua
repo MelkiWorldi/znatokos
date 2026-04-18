@@ -15,16 +15,38 @@ local text    = znatokos.use("util/text")
 
 local M = {}
 
-local ICONS = {
-    { label = "Терминал",    col = colors.lime,      app = "terminal"    },
-    { label = "Файлы",       col = colors.yellow,    app = "filemanager" },
-    { label = "Настройки",   col = colors.lightBlue, app = "settings"    },
-    { label = "Часы",        col = colors.white,     app = "clock"       },
-    { label = "Калькулятор", col = colors.orange,    app = "calc"        },
-    { label = "Змейка",      col = colors.green,     app = "snake"       },
-    { label = "Paint",       col = colors.pink,      app = "paint"       },
-    { label = "Чат",         col = colors.magenta,   app = "chat"        },
-}
+local ICONS = {}
+
+local function rebuildIcons(user)
+    ICONS = {}
+    local systemApps = {
+        { label = "Терминал",    col = colors.lime,      app = "terminal"    },
+        { label = "Файлы",       col = colors.yellow,    app = "filemanager" },
+        { label = "Настройки",   col = colors.lightBlue, app = "settings"    },
+        { label = "Часы",        col = colors.white,     app = "clock"       },
+        { label = "Калькулятор", col = colors.orange,    app = "calc"        },
+        { label = "Змейка",      col = colors.green,     app = "snake"       },
+        { label = "Paint",       col = colors.pink,      app = "paint"       },
+        { label = "Чат",         col = colors.magenta,   app = "chat"        },
+    }
+    for _, ic in ipairs(systemApps) do ICONS[#ICONS+1] = ic end
+
+    local ok_app, app = pcall(znatokos.use, "kernel/app")
+    if ok_app and app.listInstalled then
+        local ok_list, installed = pcall(app.listInstalled)
+        if ok_list and installed then
+            for _, info in ipairs(installed) do
+                local m = info.manifest
+                ICONS[#ICONS+1] = {
+                    label = m.name,
+                    col = (m.icon and m.icon.color) or colors.gray,
+                    app = info.id,
+                    glyph = m.icon and m.icon.glyph,
+                }
+            end
+        end
+    end
+end
 
 local focusedIconIdx = 1  -- для focus-ring
 
@@ -32,6 +54,17 @@ local focusedIconIdx = 1  -- для focus-ring
 -- Запуск приложения в окне
 --------------------------------------------------------------
 local function runApp(appName, user, title)
+    local ok_app, app = pcall(znatokos.use, "kernel/app")
+    if not ok_app then
+        dialog.message("Ошибка", "Модуль kernel/app не доступен")
+        return
+    end
+    -- Сначала пробуем новый API: если установлен app с id = appName
+    if app.isInstalled and app.isInstalled(appName) then
+        app.run(appName, user)
+        return
+    end
+    -- Ищем как legacy: сначала apps/, затем shell/commands/
     local appPath = paths.APPS .. "/" .. appName .. ".lua"
     if not fs.exists(appPath) then
         appPath = paths.COMMANDS .. "/" .. appName .. ".lua"
@@ -40,37 +73,7 @@ local function runApp(appName, user, title)
         dialog.message("Ошибка", "Приложение не найдено:\n" .. appName)
         return
     end
-    local sw, sh = term.getSize()
-    local w = math.min(60, math.max(30, math.floor(sw * 0.7)))
-    local h = math.min(20, math.max(12, math.floor((sh - 1) * 0.7)))
-    local win = wm.create({
-        title = title or appName, owner = user.user,
-        w = w, h = h,
-    })
-    sched.spawn({
-        name = appName, owner = user.user, window = win,
-        fn = function()
-            wm.focus(win.id)
-            local ok, err = pcall(function()
-                local chunk, e = loadfile(appPath, nil, _G)
-                if not chunk then error(e) end
-                local main = chunk()
-                if type(main) == "function" then
-                    main(user)
-                end
-            end)
-            if not ok then
-                log.error("app " .. appName .. ": " .. tostring(err))
-                -- Показать ошибку в окне перед закрытием
-                term.setBackgroundColor(colors.black); term.setTextColor(colors.red)
-                term.clear(); term.setCursorPos(1, 1)
-                print("Сбой: " .. tostring(err))
-                print(""); print("Нажмите клавишу для закрытия.")
-                pcall(os.pullEvent, "key")
-            end
-            wm.destroy(win.id)
-        end,
-    })
+    app.runLegacy(appPath, { user = user, title = title or appName })
 end
 
 --------------------------------------------------------------
@@ -251,6 +254,7 @@ end
 --------------------------------------------------------------
 function M.run(user)
     _G._znatokos_exit = false
+    rebuildIcons(user)
     drawIcons(user)
 
     -- Компактная панель на встроенном экране (если OS на мониторе)
