@@ -71,6 +71,14 @@ local function codepointToCP1251(cp)
     if cp == 0x2022 then return 0x2A end   -- • → *
     if cp == 0x2026 then return 0x2E end   -- … → .
     if cp == 0x00A0 then return 0x20 end   -- non-breaking space
+    if cp == 0x00D7 then return 0x78 end   -- × → x
+    if cp == 0x2116 then return 0x23 end   -- № → #
+    if cp == 0x2190 then return 0x3C end   -- ← → <
+    if cp == 0x2191 then return 0x5E end   -- ↑ → ^
+    if cp == 0x2192 then return 0x3E end   -- → → >
+    if cp == 0x2193 then return 0x76 end   -- ↓ → v
+    if cp == 0x2264 then return 0x3C end   -- ≤ → <
+    if cp == 0x2265 then return 0x3E end   -- ≥ → >
     if cp == 0x2500 or cp == 0x2501 then return 0x2D end
     if cp == 0x2502 or cp == 0x2503 then return 0x7C end
     if cp >= 0x250C and cp <= 0x254B then return 0x2B end
