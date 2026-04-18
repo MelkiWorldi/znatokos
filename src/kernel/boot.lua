@@ -81,6 +81,23 @@ local theme = znatokos.use("ui/theme")
 theme.applyCurrent()
 
 ---------------------------------------------------------------
+-- Node identity
+---------------------------------------------------------------
+local node_ok, node = pcall(znatokos.use, "kernel/node")
+if node_ok and node.load then pcall(node.load) end
+
+---------------------------------------------------------------
+-- Сетевые сервисы (rpc + discovery)
+---------------------------------------------------------------
+local rpc_ok, rpc = pcall(znatokos.use, "net/rpc")
+if rpc_ok and rpc.startService then pcall(rpc.startService) end
+local disc_ok, disc = pcall(znatokos.use, "net/discovery")
+if disc_ok and disc.startService then pcall(disc.startService) end
+
+local remote_ok, remote = pcall(znatokos.use, "net/remote")
+if remote_ok and remote.runHost then pcall(remote.runHost) end
+
+---------------------------------------------------------------
 -- 7. Login
 ---------------------------------------------------------------
 local login = znatokos.use("auth/login")
