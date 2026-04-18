@@ -111,11 +111,8 @@ function M.spawn(opts)
 end
 
 function M.kill(pid)
-    local t = tasks[pid]; if not t then return false end
+    if not tasks[pid] then return false end
     os.queueEvent("terminate_pid", pid)
-    tasks[pid] = nil
-    if t.window then wm.destroy(t.window.id) end
-    log.info(("kill pid=%d"):format(pid))
     return true
 end
 
@@ -127,6 +124,16 @@ function M.list()
 end
 function M.get(pid) return tasks[pid] end
 function M.count() local n = 0; for _ in pairs(tasks) do n = n + 1 end; return n end
+
+-- Убить задачу, у которой есть данное окно
+function M.killByWindow(windowId)
+    for pid, t in pairs(tasks) do
+        if t.window and t.window.id == windowId then
+            M.kill(pid); return true
+        end
+    end
+    return false
+end
 
 --------------------------------------------------------------
 -- Основной цикл планировщика
@@ -157,8 +164,41 @@ function M.run()
             os.queueEvent("znatokos:resize")
         end
 
-        if ev[1] == "terminate_pid" then
-            -- handled in M.kill
+        -- Перехват кликов на chrome окна: [X], title (drag), frame (focus).
+        -- Content-клики идут дальше в app как обычно.
+        if ev[1] == "mouse_click" and ev[2] == 1 then
+            local w, hitType = wm.hitTest(ev[3], ev[4])
+            if w then
+                if hitType == "close" and w.closable then
+                    wm.requestClose(w.id); ev = { "__swallowed__" }
+                elseif hitType == "title" then
+                    wm.focus(w.id); wm.beginDrag(w.id, ev[3], ev[4])
+                    ev = { "__swallowed__" }
+                elseif hitType == "frame" then
+                    wm.focus(w.id); ev = { "__swallowed__" }
+                elseif hitType == "content" then
+                    wm.focus(w.id)   -- клик в контент = тоже focus
+                end
+            end
+        elseif ev[1] == "mouse_drag" and wm.isDragging() then
+            wm.updateDrag(ev[3], ev[4]); ev = { "__swallowed__" }
+        elseif ev[1] == "mouse_up" and wm.isDragging() then
+            wm.endDrag()
+        end
+
+        if ev[1] == "__swallowed__" then
+            -- событие обработано window manager'ом, никому не передаём
+        elseif ev[1] == "terminate_pid" then
+            local pid = ev[2]
+            local t = tasks[pid]
+            if t then
+                if t.window then wm.destroy(t.window.id) end
+                if coroutine.status(t.co) == "suspended" then
+                    pcall(resumeTask, t, "terminate")
+                end
+                tasks[pid] = nil
+                log.info(("killed pid=%d"):format(pid))
+            end
         else
             for pid, task in pairs(tasks) do
                 if matchEvent(task, ev)

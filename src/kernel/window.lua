@@ -277,6 +277,9 @@ end
 --------------------------------------------------------------
 function M.requestClose(id)
     if onClose then onClose(id) end
+    -- Убить задачу, которая владеет этим окном, чтобы не висела корутина
+    local ok, sched = pcall(znatokos.use, "kernel/scheduler")
+    if ok and sched.killByWindow then sched.killByWindow(id) end
     M.destroy(id)
 end
 

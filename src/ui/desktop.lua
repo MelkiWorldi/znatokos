@@ -52,12 +52,21 @@ local function runApp(appName, user, title)
         fn = function()
             wm.focus(win.id)
             local ok, err = pcall(function()
-                local fn, e = loadfile(appPath, nil, _G)
-                if not fn then error(e) end
-                fn(user)
+                local chunk, e = loadfile(appPath, nil, _G)
+                if not chunk then error(e) end
+                local main = chunk()
+                if type(main) == "function" then
+                    main(user)
+                end
             end)
             if not ok then
                 log.error("app " .. appName .. ": " .. tostring(err))
+                -- Показать ошибку в окне перед закрытием
+                term.setBackgroundColor(colors.black); term.setTextColor(colors.red)
+                term.clear(); term.setCursorPos(1, 1)
+                print("Сбой: " .. tostring(err))
+                print(""); print("Нажмите клавишу для закрытия.")
+                pcall(os.pullEvent, "key")
             end
             wm.destroy(win.id)
         end,
@@ -261,50 +270,32 @@ function M.run(user)
                 if ev[1] == "mouse_click" then
                     local btn, mx, my = ev[2], ev[3], ev[4]
                     pointer.onMouseClick()
-                    -- сначала проверим окно (клик мог попасть в title bar [X] / drag)
-                    local w, hitType = wm.hitTest(mx, my)
-                    if w then
-                        if btn == 1 and hitType == "close" and w.closable then
-                            wm.requestClose(w.id)
-                        elseif btn == 1 and hitType == "title" then
-                            wm.focus(w.id)
-                            wm.beginDrag(w.id, mx, my)
-                        elseif btn == 1 and hitType == "frame" then
-                            wm.focus(w.id)
-                        end
-                        -- content/title клики передадутся соответствующему таску
+                    -- Chrome-клики обрабатывает scheduler.
+                    -- Сюда (desktop = задача без окна) приходят только клики
+                    -- в пустые зоны (taskbar, иконки, пустой фон).
+                    local tb = taskbar.handleClick(mx, my)
+                    if tb == "start" then
+                        startMenu(user); drawIcons(user)
+                    elseif tb == "clock" then
+                        dialog.message("Часы", textutils.formatTime(os.time(), true)
+                            .. "\nДень: " .. os.day())
+                        drawIcons(user)
+                    elseif tb == "window" then
+                        -- focus уже сделан в taskbar
                     else
-                        -- клик в пустом пространстве desktop
-                        local tb = taskbar.handleClick(mx, my)
-                        if tb == "start" then
-                            startMenu(user); drawIcons(user)
-                        elseif tb == "clock" then
-                            dialog.message("Часы", textutils.formatTime(os.time(), true)
-                                .. "\nДень: " .. os.day())
-                            drawIcons(user)
-                        elseif tb == "window" then
-                            -- focus уже сделан в taskbar
-                        else
-                            local ic, idx = iconAt(mx, my)
-                            if ic then
-                                focusedIconIdx = idx
-                                if btn == 1 then
-                                    runApp(ic.app, user, ic.label)
-                                elseif btn == 2 then
-                                    iconContextMenu(user, ic, mx, my)
-                                    drawIcons(user)
-                                end
-                            else
-                                if btn == 2 then
-                                    desktopContextMenu(user, mx, my)
-                                end
+                        local ic, idx = iconAt(mx, my)
+                        if ic then
+                            focusedIconIdx = idx
+                            if btn == 1 then
+                                runApp(ic.app, user, ic.label)
+                            elseif btn == 2 then
+                                iconContextMenu(user, ic, mx, my)
+                                drawIcons(user)
                             end
+                        elseif btn == 2 then
+                            desktopContextMenu(user, mx, my)
                         end
                     end
-                elseif ev[1] == "mouse_drag" then
-                    if wm.isDragging() then wm.updateDrag(ev[3], ev[4]) end
-                elseif ev[1] == "mouse_up" then
-                    wm.endDrag()
                 elseif ev[1] == "key" then
                     local k = ev[2]
                     if pointer.isEnabled() and pointer.handleKey(k, false) then
