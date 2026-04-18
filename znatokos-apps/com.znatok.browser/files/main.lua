@@ -22,6 +22,14 @@ local urlLib = loadLib("url.lua")
 local html   = loadLib("html.lua")
 local layout = loadLib("layout.lua")
 local render = loadLib("render.lua")
+local link   = loadLib("link.lua")
+local form   = loadLib("form.lua")
+local js     = loadLib("js.lua")
+
+-- Пробрасываем url-модуль в link.lua (у link.lua нет require в CC).
+if link and link._setUrlLib and urlLib then
+    link._setUrlLib(urlLib)
+end
 
 -- ---------------------------------------------------------------
 -- Состояние
@@ -38,8 +46,21 @@ local state = {
     status      = "готов",
     focus       = "address", -- "address" | "page"
     running     = true,
+    altDown     = false,
 }
 state.cursorPos = #state.urlInput + 1
+
+-- История навигации.
+local history = { stack = {}, idx = 0 }
+
+local function pushHistory(u)
+    -- Если мы не в конце истории (после back) — обрезаем будущее.
+    while #history.stack > history.idx do
+        table.remove(history.stack)
+    end
+    history.stack[#history.stack + 1] = u
+    history.idx = #history.stack
+end
 
 local THEME = {
     bg          = colors.white,
@@ -147,7 +168,11 @@ local function drawStatus(g)
     term.setCursorPos(1, g.statusY)
     term.setBackgroundColor(THEME.status_bg)
     term.setTextColor(THEME.status_fg)
-    local s = "Статус: " .. tostring(state.status)
+    -- Breadcrumb-индикатор истории.
+    local crumb = ""
+    if history.idx > 1 then crumb = crumb .. "<" else crumb = crumb .. " " end
+    if history.idx < #history.stack then crumb = crumb .. ">" else crumb = crumb .. " " end
+    local s = crumb .. " Статус: " .. tostring(state.status)
     if #s > g.w then s = s:sub(1, g.w) end
     s = s .. string.rep(" ", g.w - #s)
     term.write(s)
@@ -183,7 +208,8 @@ end
 -- Навигация
 -- ---------------------------------------------------------------
 
-local function navigate(u)
+local function navigate(u, opts)
+    opts = opts or {}
     if not u or u == "" then
         state.status = "пустой URL"
         return
@@ -268,6 +294,30 @@ local function navigate(u)
     state.status      = "ok  (" .. #boxes .. " блоков, " ..
                         tostring(state.totalHeight) .. " строк)"
     state.focus       = "page"
+
+    -- Обновляем поле адреса актуальным URL (после редиректов).
+    if state.currentUrl then
+        state.urlInput = state.currentUrl
+        state.cursorPos = #state.urlInput + 1
+    end
+
+    if not opts.skipHistory then
+        pushHistory(state.currentUrl or u)
+    end
+end
+
+local function historyBack()
+    if history.idx > 1 then
+        history.idx = history.idx - 1
+        navigate(history.stack[history.idx], { skipHistory = true })
+    end
+end
+
+local function historyForward()
+    if history.idx < #history.stack then
+        history.idx = history.idx + 1
+        navigate(history.stack[history.idx], { skipHistory = true })
+    end
 end
 
 -- ---------------------------------------------------------------
@@ -324,8 +374,24 @@ local function handleKey(k)
         return
     end
 
+    -- Отслеживаем состояние Alt (CC:Tweaked шлёт отдельные key-события).
+    if k == keys.leftAlt or k == keys.rightAlt then
+        state.altDown = true
+        return
+    end
+
     if k == keys.tab then
         state.focus = (state.focus == "address") and "page" or "address"
+        return
+    end
+
+    -- Alt+Left/Right — история (работает в любом фокусе).
+    if state.altDown and k == keys.left then
+        historyBack()
+        return
+    end
+    if state.altDown and k == keys.right then
+        historyForward()
         return
     end
 
@@ -359,7 +425,16 @@ local function handleKey(k)
             state.scrollY = 0
         elseif k == keys["end"] then
             state.scrollY = maxScroll()
+        elseif k == keys.backspace then
+            -- Backspace в режиме страницы — назад по истории (как в старых браузерах).
+            historyBack()
         end
+    end
+end
+
+local function handleKeyUp(k)
+    if k == keys.leftAlt or k == keys.rightAlt then
+        state.altDown = false
     end
 end
 
@@ -383,7 +458,91 @@ local function handleMouseClick(btn, x, y)
         end
     elseif y >= g.contentY1 and y <= g.contentY2 then
         state.focus = "page"
-        -- TODO (iter 8): hit-test ссылок/кнопок через render.hitTest.
+        if not (state.boxes and render and render.hitTest) then return end
+        local viewport = {
+            x = 1, y = g.contentY1,
+            width = g.w, height = g.contentY2 - g.contentY1 + 1,
+        }
+        local box = render.hitTest(state.boxes, x, y, state.scrollY or 0, viewport)
+        if not box then return end
+
+        if box.type == "link" and box.href then
+            if link and link.boxToAbsoluteUrl then
+                local abs = link.boxToAbsoluteUrl(box, state.currentUrl or "")
+                if abs then
+                    navigate(abs)
+                else
+                    state.status = "не удалось разрешить ссылку: " .. tostring(box.href)
+                end
+            else
+                navigate(box.href)
+            end
+        elseif box.type == "button" then
+            local onclick = box.node and box.node.attrs and box.node.attrs.onclick
+            if onclick and js and js.eval then
+                local jsCtx = {
+                    navigate = function(u) navigate(u) end,
+                    submit = function(formId)
+                        if not (form and form.submit and html and html.findAll) then return end
+                        local forms = html.findAll(state.dom, "form") or {}
+                        for _, f in ipairs(forms) do
+                            if f.attrs and f.attrs.id == formId then
+                                local ok, resp = pcall(form.submit, f, state.currentUrl, http)
+                                if ok and resp then
+                                    -- Если пришёл finalUrl — идём на него как при обычной навигации.
+                                    if resp.finalUrl then
+                                        navigate(resp.finalUrl)
+                                    end
+                                end
+                                return
+                            end
+                        end
+                    end,
+                    alert = function(msg) state.status = "alert: " .. tostring(msg) end,
+                    back = historyBack,
+                    forward = historyForward,
+                }
+                local ok, err = pcall(js.eval, onclick, jsCtx)
+                if not ok then
+                    state.status = "js ошибка: " .. tostring(err)
+                end
+            else
+                -- Submit-кнопка формы: ищем ближайшую родительскую <form>, содержащую эту кнопку.
+                if form and form.submit and html and html.findAll then
+                    local forms = html.findAll(state.dom, "form") or {}
+                    -- Ищем форму, в поддереве которой есть наш button node.
+                    local function contains(node, target)
+                        if node == target then return true end
+                        if node.children then
+                            for _, ch in ipairs(node.children) do
+                                if contains(ch, target) then return true end
+                            end
+                        end
+                        return false
+                    end
+                    local parentForm
+                    for _, f in ipairs(forms) do
+                        if box.node and contains(f, box.node) then
+                            parentForm = f
+                            break
+                        end
+                    end
+                    if parentForm then
+                        local ok, resp = pcall(form.submit, parentForm, state.currentUrl, http)
+                        if ok and resp and resp.finalUrl then
+                            navigate(resp.finalUrl)
+                        elseif not ok then
+                            state.status = "ошибка отправки формы: " .. tostring(resp)
+                        end
+                    else
+                        state.status = "кнопка не связана с формой"
+                    end
+                end
+            end
+        elseif box.type == "input" then
+            -- TODO (iter 10): инлайн-редактирование значения поля.
+            state.status = "редактирование полей появится в следующей итерации"
+        end
     end
 end
 
@@ -421,6 +580,8 @@ local function main()
         local name = ev[1]
         if name == "key" then
             handleKey(ev[2])
+        elseif name == "key_up" then
+            handleKeyUp(ev[2])
         elseif name == "char" then
             handleChar(ev[2])
         elseif name == "mouse_click" then
