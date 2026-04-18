@@ -259,8 +259,9 @@ function M.run(user)
         name = "taskbar-clock", owner = user.user,
         fn = function()
             while true do
-                sleep(10)
-                if not _G._znatokos_exit then taskbar.draw() end
+                sleep(1)
+                if _G._znatokos_exit then return end
+                pcall(taskbar.draw)
             end
         end,
     })
