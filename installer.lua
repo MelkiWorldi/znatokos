@@ -68,6 +68,14 @@ for i, rel in ipairs(manifest.files) do
     writeFile(dst, data)
 end
 
+-- Создаём дополнительные каталоги (v0.3.0+)
+local function ensureDir(p)
+    if not fs.exists(p) then fs.makeDir(p) end
+end
+ensureDir(root .. "/apps")
+ensureDir(root .. "/var")
+ensureDir(root .. "/var/store_cache")
+
 term.setTextColor(colors.lime)
 print("")
 print("Установка завершена.")

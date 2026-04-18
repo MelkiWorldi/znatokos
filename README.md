@@ -2,6 +2,14 @@
 
 Операционная система на Lua для мода **CC: Tweaked** (Minecraft). Работает на Advanced Computer (цветной экран, мышь).
 
+## Что нового в v0.3.0-alpha
+
+- Манифесты приложений (`src/pkg/manifest.lua`) с декларацией прав
+- HTTP-магазин приложений (`src/pkg/store.lua`) с кэшем и песочницей запуска
+- Сетевая identity узла (`src/kernel/node.lua`) и capabilities
+- Межузловой RPC и автодискавери (`src/net/rpc.lua`, `src/net/discovery.lua`)
+- Заготовка встроенного браузера магазина
+
 ## Возможности
 
 - Многозадачный шелл с историей, alias и автодополнением

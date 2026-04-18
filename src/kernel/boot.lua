@@ -6,7 +6,7 @@
 -- 1. Глобальный загрузчик модулей
 ---------------------------------------------------------------
 if not _G.znatokos then
-    _G.znatokos = { VERSION = "0.2.0", loaded = {} }
+    _G.znatokos = { VERSION = "0.3.0-alpha", loaded = {} }
     function _G.znatokos.use(path)
         if _G.znatokos.loaded[path] then return _G.znatokos.loaded[path] end
         local full = "/znatokos/src/" .. path .. ".lua"

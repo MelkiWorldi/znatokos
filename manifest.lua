@@ -3,7 +3,7 @@
 -- а также pkg.manager для обновлений.
 return {
     name = "znatokos",
-    version = "0.2.0",
+    version = "0.3.0-alpha",
     root = "/znatokos",
     startup = "/startup.lua",
     files = {
@@ -17,6 +17,9 @@ return {
         "src/kernel/ipc.lua",
         "src/kernel/log.lua",
         "src/kernel/display.lua",
+        "src/kernel/node.lua",
+        "src/kernel/capabilities.lua",
+        "src/kernel/app.lua",
         -- FS
         "src/fs/vfs.lua",
         "src/fs/paths.lua",
@@ -66,15 +69,23 @@ return {
         "src/shell/commands/whoami.lua",
         "src/shell/commands/logout.lua",
         "src/shell/commands/monsetup.lua",
+        "src/shell/commands/node.lua",
+        "src/shell/commands/store.lua",
+        "src/shell/commands/peers.lua",
+        "src/shell/commands/rpc.lua",
         -- Net
         "src/net/rednet.lua",
         "src/net/chat.lua",
         "src/net/filetransfer.lua",
         "src/net/remote.lua",
+        "src/net/rpc.lua",
+        "src/net/discovery.lua",
         -- Pkg
         "src/pkg/manager.lua",
         "src/pkg/repo.lua",
-        "src/pkg/repo_default.lua",
+        "src/pkg/manifest.lua",
+        "src/pkg/sandbox.lua",
+        "src/pkg/store.lua",
         -- Apps
         "src/apps/terminal.lua",
         "src/apps/filemanager.lua",
@@ -92,5 +103,9 @@ return {
         "tests/test_text.lua",
         "tests/test_layout.lua",
         "tests/test_focus.lua",
+        "tests/test_manifest.lua",
+        "tests/test_node.lua",
+        "tests/test_sandbox.lua",
+        "tests/test_rpc.lua",
     },
 }
