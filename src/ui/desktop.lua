@@ -120,10 +120,13 @@ local function drawIcons(user)
             term.setCursorPos(ic._x + 2, ic._y + 1); term.write("|")
             term.setCursorPos(ic._x - 1, ic._y + 2); term.write("+--+")
         end
-        -- подпись
+        -- подпись: центрируем в ячейке (CELL_W), а не вокруг иконки (ICON_W=2),
+        -- иначе длинные подписи в крайних колонках уходят за экран.
         term.setBackgroundColor(th.desktop); term.setTextColor(colors.white)
         local label = text.ellipsize(ic.label, CELL_W - 2)
-        local lx = ic._x + math.floor((ICON_W - text.len(label)) / 2)
+        local cellLeft = ic._x - 1     -- ic._x = 2 + col*CELL_W → cellLeft = 1 + col*CELL_W
+        local lx = cellLeft + math.floor((CELL_W - text.len(label)) / 2)
+        if lx < 1 then lx = 1 end
         term.setCursorPos(lx, ic._y + 2); term.write(label)
     end
     taskbar.draw()
@@ -283,11 +286,11 @@ function M.run(user)
                     -- в пустые зоны (taskbar, иконки, пустой фон).
                     local tb = taskbar.handleClick(mx, my)
                     if tb == "start" then
-                        startMenu(user); drawIcons(user)
+                        startMenu(user); drawIcons(user); wm.redrawAll()
                     elseif tb == "clock" then
                         dialog.message("Часы", textutils.formatTime(os.time(), true)
                             .. "\nДень: " .. os.day())
-                        drawIcons(user)
+                        drawIcons(user); wm.redrawAll()
                     elseif tb == "window" then
                         -- focus уже сделан в taskbar
                     else
@@ -298,10 +301,10 @@ function M.run(user)
                                 runApp(ic.app, user, ic.label)
                             elseif btn == 2 then
                                 iconContextMenu(user, ic, mx, my)
-                                drawIcons(user)
+                                drawIcons(user); wm.redrawAll()
                             end
                         elseif btn == 2 then
-                            desktopContextMenu(user, mx, my)
+                            desktopContextMenu(user, mx, my); wm.redrawAll()
                         end
                     end
                 elseif ev[1] == "key" then
@@ -309,7 +312,7 @@ function M.run(user)
                     if pointer.isEnabled() and pointer.handleKey(k, false) then
                         -- handled
                     elseif k == keys.f10 then
-                        startMenu(user); drawIcons(user)
+                        startMenu(user); drawIcons(user); wm.redrawAll()
                     elseif k == keys.tab then
                         if #wm.list() > 0 then wm.nextWindow()
                         else
@@ -325,10 +328,10 @@ function M.run(user)
                         if ic then runApp(ic.app, user, ic.label) end
                     end
                 elseif ev[1] == "znatokos:redraw" then
-                    drawIcons(user)
+                    drawIcons(user); wm.redrawAll()
                 elseif ev[1] == "znatokos:resize" or ev[1] == "term_resize" then
                     wm.reflow()
-                    drawIcons(user)
+                    drawIcons(user); wm.redrawAll()
                 end
             end
         end,
