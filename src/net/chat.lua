@@ -5,7 +5,18 @@ local M = {}
 
 function M.run(nickname)
     if not net.ensureOpen() then
-        print("Нет модема. Присоедините модем к компьютеру.")
+        term.setBackgroundColor(colors.black); term.clear(); term.setCursorPos(1, 1)
+        term.setTextColor(colors.red)
+        print("Нет модема.")
+        term.setTextColor(colors.white)
+        print("")
+        print("Присоедините wireless или ender")
+        print("modem к компьютеру (любая сторона)")
+        print("и перезапустите чат.")
+        print("")
+        term.setTextColor(colors.lightGray)
+        print("Нажмите любую клавишу...")
+        os.pullEvent("key")
         return 1
     end
     nickname = nickname or net.label()
