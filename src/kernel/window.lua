@@ -133,10 +133,12 @@ local function drawChrome(w)
     term.redirect(prev)
 end
 
+-- Компонует видимые окна поверх того, что уже на parent'е.
+-- НЕ очищает фон и НЕ триггерит перерисовку иконок — это делает desktop,
+-- когда получает znatokos:redraw. Раньше redrawAll делал и то и другое,
+-- что приводило к бесконечному циклу событий (redrawAll → event →
+-- desktop → redrawAll → event → ...) и к стиранию иконок.
 function M.redrawAll()
-    parentTerm.setBackgroundColor(theme.get().desktop or colors.cyan)
-    parentTerm.clear()
-    os.queueEvent("znatokos:redraw")
     for _, id in ipairs(zorder) do
         local w = windows[id]
         if w and w.visible then
@@ -146,6 +148,10 @@ function M.redrawAll()
         end
     end
 end
+
+-- Запрашивает у desktop полную перерисовку: фон+иконки+окна.
+-- Desktop в обработчике znatokos:redraw вызовет drawIcons() и wm.redrawAll().
+local function requestFullRedraw() os.queueEvent("znatokos:redraw") end
 
 function M.focus(id)
     local w = windows[id]; if not w then return end
@@ -179,7 +185,7 @@ function M.destroy(id)
         local list = M.list()
         if #list > 0 then M.focus(list[#list].id) end
     end
-    M.redrawAll()
+    requestFullRedraw()
 end
 
 function M.nextWindow()
@@ -246,7 +252,7 @@ function M.updateDrag(gx, gy)
         else
             w.win.reposition(nx, ny)
         end
-        M.redrawAll()
+        requestFullRedraw()
     end
 end
 
@@ -275,7 +281,7 @@ function M.reflow()
             end
         end
     end
-    M.redrawAll()
+    requestFullRedraw()
 end
 
 --------------------------------------------------------------
