@@ -86,14 +86,11 @@ return {
         "src/pkg/manifest.lua",
         "src/pkg/sandbox.lua",
         "src/pkg/store.lua",
-        -- Apps
+        -- Apps (core — остальные ставятся из магазина)
         "src/apps/terminal.lua",
         "src/apps/filemanager.lua",
         "src/apps/settings.lua",
-        "src/apps/clock.lua",
-        "src/apps/calc.lua",
-        "src/apps/snake.lua",
-        "src/apps/paint.lua",
+        "src/apps/store.lua",
         -- Tests
         "tests/run_tests.lua",
         "tests/test_shell.lua",

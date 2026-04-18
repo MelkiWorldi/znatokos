@@ -389,6 +389,11 @@ function M.build(opts)
     env.colors      = colors
     env.colours     = colours or colors
     env.keys        = keys
+    env.io          = io
+    env.parallel    = parallel
+    env.vector      = vector
+    env.paintutils  = paintutils
+    env.window      = window
 
     env.os          = buildOs(caps)
 
@@ -442,7 +447,7 @@ function M.build(opts)
     local kernelTbl = { use = safeUse }
     if hasCap(caps, "kernel.spawn") then
         -- spawn пробрасывается если есть cap
-        local sched = znatokos.use("kernel/sched")
+        local sched = znatokos.use("kernel/scheduler")
         kernelTbl.spawn = sched and sched.spawn
     end
     env.kernel = kernelTbl
@@ -451,7 +456,7 @@ function M.build(opts)
     env.znatokos = {
         VERSION = (_G.znatokos and _G.znatokos.VERSION) or "0.3.0",
         use     = safeUse,
-        app     = { id = appId, dir = appDir },
+        app     = { id = appId, dir = appDir, user = user },
     }
 
     -- load/loadfile/loadstring: ограничены appDir

@@ -19,16 +19,14 @@ local ICONS = {}
 
 local function rebuildIcons(user)
     ICONS = {}
+    -- Core apps в OS (legacy: /znatokos/src/apps/<name>.lua).
+    -- Остальные (paint/snake/calc/clock/chat и другие) появляются
+    -- динамически ниже через kernel/app.listInstalled().
     local systemApps = {
-        { label = "Терминал",    col = colors.lime,      app = "terminal"    },
-        { label = "Файлы",       col = colors.yellow,    app = "filemanager" },
-        { label = "Настройки",   col = colors.lightBlue, app = "settings"    },
-        { label = "Магазин",     col = colors.cyan,      app = "store"       },
-        { label = "Часы",        col = colors.white,     app = "clock"       },
-        { label = "Калькулятор", col = colors.orange,    app = "calc"        },
-        { label = "Змейка",      col = colors.green,     app = "snake"       },
-        { label = "Paint",       col = colors.pink,      app = "paint"       },
-        { label = "Чат",         col = colors.magenta,   app = "chat"        },
+        { label = "Терминал",  col = colors.lime,      app = "terminal"    },
+        { label = "Файлы",     col = colors.yellow,    app = "filemanager" },
+        { label = "Настройки", col = colors.lightBlue, app = "settings"    },
+        { label = "Магазин",   col = colors.cyan,      app = "store"       },
     }
     for _, ic in ipairs(systemApps) do ICONS[#ICONS+1] = ic end
 
@@ -60,12 +58,18 @@ local function runApp(appName, user, title)
         dialog.message("Ошибка", "Модуль kernel/app не доступен")
         return
     end
-    -- Сначала пробуем новый API: если установлен app с id = appName
-    if app.isInstalled and app.isInstalled(appName) then
-        app.run(appName, user)
-        return
+    -- Пробуем как app-id (новый API с манифестом).
+    -- Пытаемся короткое имя и привычный prefix com.znatok.<name>.
+    local candidates = { appName, "com.znatok." .. appName }
+    if app.isInstalled then
+        for _, cid in ipairs(candidates) do
+            if app.isInstalled(cid) then
+                app.run(cid, user)
+                return
+            end
+        end
     end
-    -- Ищем как legacy: сначала apps/, затем shell/commands/
+    -- Legacy: apps/, затем shell/commands/
     local appPath = paths.APPS .. "/" .. appName .. ".lua"
     if not fs.exists(appPath) then
         appPath = paths.COMMANDS .. "/" .. appName .. ".lua"
