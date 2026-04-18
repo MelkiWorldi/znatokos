@@ -109,54 +109,77 @@ end
 -- Устанавливает глобальные перехваты на вывод.
 -- После вызова весь term.write / term.blit / print / io.write
 -- перекодируют UTF-8 кириллицу в CP1251.
+-- Re-entry guard: предотвращает двойное кодирование при вложенных вызовах.
+-- term.write → origWrite → делегирует в wrapped w.write → БЕЗ guard'а
+-- w.write закодировал бы повторно: CP1251-байты (0xC0..0xFF) интерпретируются
+-- как битая UTF-8 → decodeUtf8 возвращает мусор → codepointToCP1251 даёт 0x3F = '?'.
+local depth = 0
+local function wrap(s) return M.encode(tostring(s)) end
+local function safeWrap(s)
+    if depth > 0 then return tostring(s) end
+    return wrap(s)
+end
+
 local installed = false
 function M.installHooks()
     if installed then return end
     installed = true
 
     local origWrite = term.write
-    term.write = function(text) return origWrite(M.encode(tostring(text))) end
+    term.write = function(text)
+        local s = safeWrap(text)
+        depth = depth + 1
+        local ok, err = pcall(origWrite, s)
+        depth = depth - 1
+        if not ok then error(err, 0) end
+    end
 
     if term.blit then
         local origBlit = term.blit
         term.blit = function(text, fg, bg)
-            return origBlit(M.encode(tostring(text)), fg, bg)
+            local s = safeWrap(text)
+            depth = depth + 1
+            local ok, err = pcall(origBlit, s, fg, bg)
+            depth = depth - 1
+            if not ok then error(err, 0) end
         end
     end
 
-    -- io.write: оборачиваем только вывод в stdout
+    -- io.write: тоже через guard (возможно уходит в term.write внутри)
     local origIoWrite = io.write
     io.write = function(...)
         local parts = { ... }
-        for i, v in ipairs(parts) do parts[i] = M.encode(tostring(v)) end
-        return origIoWrite(table.unpack(parts))
-    end
-
-    -- print: Lua-реализация, чтобы не дублировать перевод через io.write
-    -- (стандартный print вызывает term.write напрямую в некоторых сборках CC)
-    local origPrint = print
-    _G.print = function(...)
-        local args = { ... }
-        local parts = {}
-        for i = 1, select("#", ...) do
-            parts[i] = M.encode(tostring(args[i]))
+        if depth == 0 then
+            for i, v in ipairs(parts) do parts[i] = wrap(v) end
         end
-        return origPrint(table.unpack(parts))
+        depth = depth + 1
+        local ok, err = pcall(origIoWrite, table.unpack(parts))
+        depth = depth - 1
+        if not ok then error(err, 0) end
     end
 
-    -- Также перехват window.write если окно уже создано — нельзя,
-    -- поскольку window.create возвращает новую таблицу. Вместо этого
-    -- оборачиваем window.create, чтобы каждое новое окно получало патч.
+    -- Оборачиваем window.create: w.write может вызываться напрямую
+    -- (напр., kernel/window.lua рисует chrome через ch.write).
     if window and window.create then
         local origCreate = window.create
         window.create = function(...)
             local w = origCreate(...)
             local wWrite = w.write
-            w.write = function(text) return wWrite(M.encode(tostring(text))) end
+            w.write = function(text)
+                local s = safeWrap(text)
+                depth = depth + 1
+                local ok, err = pcall(wWrite, s)
+                depth = depth - 1
+                if not ok then error(err, 0) end
+            end
             if w.blit then
                 local wBlit = w.blit
                 w.blit = function(text, fg, bg)
-                    return wBlit(M.encode(tostring(text)), fg, bg)
+                    local s = safeWrap(text)
+                    depth = depth + 1
+                    local ok, err = pcall(wBlit, s, fg, bg)
+                    depth = depth - 1
+                    if not ok then error(err, 0) end
                 end
             end
             return w
