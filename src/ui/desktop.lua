@@ -250,6 +250,10 @@ function M.run(user)
     _G._znatokos_exit = false
     drawIcons(user)
 
+    -- Компактная панель на встроенном экране (если OS на мониторе)
+    local ok_d, dash = pcall(znatokos.use, "ui/builtin_dashboard")
+    if ok_d and dash.start then dash.start() end
+
     -- фоновая задача: часы в taskbar
     sched.spawn({
         name = "taskbar-clock", owner = user.user,

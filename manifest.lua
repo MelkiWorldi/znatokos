@@ -32,6 +32,7 @@ return {
         "src/ui/layout.lua",
         "src/ui/focus.lua",
         "src/ui/pointer.lua",
+        "src/ui/builtin_dashboard.lua",
         "src/ui/widgets.lua",
         "src/ui/dialog.lua",
         "src/ui/desktop.lua",

@@ -21,22 +21,12 @@ local M = {}
 local builtinTerm = term.current()
 local currentAdapter = nil
 
---------------------------------------------------------------
--- mirror (primary + secondary): для mirror_builtin = true
---------------------------------------------------------------
-local function makeMirrorTerm(primary, secondary)
-    local t = {}
-    for name, fn in pairs(primary) do
-        if type(fn) == "function" then
-            t[name] = function(...)
-                local r = table.pack(primary[name](...))
-                pcall(secondary[name], ...)
-                return table.unpack(r, 1, r.n)
-            end
-        end
-    end
-    return t
-end
+-- (mirror больше не используется — встроенный экран показывает
+-- отдельную компактную панель через ui/builtin_dashboard)
+
+-- Экспорт встроенного терминала для dashboard'а
+function M.getBuiltinTerm() return builtinTerm end
+function M.hasMonitor() return currentAdapter and currentAdapter.kind ~= "builtin" end
 
 --------------------------------------------------------------
 -- tile: сетка N×M отдельных одинаковых мониторов
@@ -264,11 +254,7 @@ function M.start()
     if cfg and cfg.plane and #cfg.plane > 0 then
         local planeTerm, regions = buildPlane(cfg)
         if planeTerm then
-            local mirror = planeTerm
-            if cfg.mirror_builtin then
-                mirror = makeMirrorTerm(planeTerm, builtinTerm)
-            end
-            adapter = { term = mirror, kind = "plane", regions = regions }
+            adapter = { term = planeTerm, kind = "plane", regions = regions }
             log.info(("display: plane, %d groups"):format(#regions))
         end
     end
@@ -277,12 +263,13 @@ function M.start()
         local mon = peripheral.find("monitor")
         if mon then
             pcall(mon.setTextScale, 0.5)
-            local mirror = makeMirrorTerm(mon, builtinTerm)
-            adapter = { term = mirror, kind = "single" }
+            adapter = { term = mon, kind = "single" }
             local w, h = mon.getSize()
             log.info(("display: single monitor %dx%d"):format(w, h))
         else
-            return false
+            -- Нет монитора — OS живёт прямо на builtin'е
+            adapter = { term = builtinTerm, kind = "builtin" }
+            log.info("display: builtin only")
         end
     end
 
