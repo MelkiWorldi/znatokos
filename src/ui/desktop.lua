@@ -23,6 +23,7 @@ local function rebuildIcons(user)
         { label = "Терминал",    col = colors.lime,      app = "terminal"    },
         { label = "Файлы",       col = colors.yellow,    app = "filemanager" },
         { label = "Настройки",   col = colors.lightBlue, app = "settings"    },
+        { label = "Магазин",     col = colors.cyan,      app = "store"       },
         { label = "Часы",        col = colors.white,     app = "clock"       },
         { label = "Калькулятор", col = colors.orange,    app = "calc"        },
         { label = "Змейка",      col = colors.green,     app = "snake"       },
