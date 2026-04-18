@@ -37,28 +37,45 @@ local function decodeUtf8(s, i)
     return b, i + 1
 end
 
+-- Кодировка ресурспака "CC:Tweaked Russian language" (Modrinth: KYJWaUcW).
+-- Раскладка: А=191, Б=192, ..., Е=196, Ё=197, Ж=198, ..., Я=223,
+-- а=224, ..., е=229, ё=230, ж=231, ..., ю=255, я=\13 (позиция CR).
 local function codepointToCP1251(cp)
     if cp < 0x80 then return cp end
-    if cp >= 0x0410 and cp <= 0x044F then return cp - 0x0410 + 0xC0 end
-    if cp == 0x0401 then return 0xA8 end   -- Ё
-    if cp == 0x0451 then return 0xB8 end   -- ё
-    if cp == 0x2116 then return 0xB9 end   -- №
-    if cp == 0x00AB then return 0xAB end   -- «
-    if cp == 0x00BB then return 0xBB end   -- »
-    if cp == 0x2014 then return 0x97 end   -- —
-    if cp == 0x2013 then return 0x96 end   -- –
-    if cp == 0x2022 then return 0x95 end   -- •
-    if cp == 0x2026 then return 0x85 end   -- …
-    if cp == 0x00A0 then return 0xA0 end   -- non-breaking space
-    -- Unicode box-drawing → ASCII (CP1251 их не имеет)
-    if cp == 0x2500 or cp == 0x2501 then return 0x2D end   -- ─ ━ → -
-    if cp == 0x2502 or cp == 0x2503 then return 0x7C end   -- │ ┃ → |
-    if cp >= 0x250C and cp <= 0x254B then return 0x2B end  -- ┌─┘ углы → +
-    if cp == 0x2588 then return 0xFE end   -- █ full block (есть в шрифте)
-    if cp >= 0x2591 and cp <= 0x2593 then return 0xB0 end  -- ░▒▓
-    if cp == 0x25A0 then return 0xFE end   -- ■
-    if cp == 0x25CF then return 0x95 end   -- ●
-    -- неизвестный символ
+    -- Ё (уникод 0x0401) → 197
+    if cp == 0x0401 then return 197 end
+    -- ё (уникод 0x0451) → 230
+    if cp == 0x0451 then return 230 end
+    -- Заглавные А-Е (U+0410-0415) → 191-196
+    if cp >= 0x0410 and cp <= 0x0415 then
+        return cp - 0x0410 + 191
+    end
+    -- Заглавные Ж-Я (U+0416-042F) → 198-223
+    if cp >= 0x0416 and cp <= 0x042F then
+        return cp - 0x0416 + 198
+    end
+    -- Строчные а-е (U+0430-0435) → 224-229
+    if cp >= 0x0430 and cp <= 0x0435 then
+        return cp - 0x0430 + 224
+    end
+    -- Строчные ж-ю (U+0436-044E) → 231-255
+    if cp >= 0x0436 and cp <= 0x044E then
+        return cp - 0x0436 + 231
+    end
+    -- я (U+044F) → 13 (пакет использует позицию \r для "я")
+    if cp == 0x044F then return 13 end
+    -- ASCII-аналоги для символов без глифов в паке
+    if cp == 0x00AB then return 0x3C end   -- « → <
+    if cp == 0x00BB then return 0x3E end   -- » → >
+    if cp == 0x2014 or cp == 0x2013 then return 0x2D end  -- — – → -
+    if cp == 0x2022 then return 0x2A end   -- • → *
+    if cp == 0x2026 then return 0x2E end   -- … → .
+    if cp == 0x00A0 then return 0x20 end   -- non-breaking space
+    if cp == 0x2500 or cp == 0x2501 then return 0x2D end
+    if cp == 0x2502 or cp == 0x2503 then return 0x7C end
+    if cp >= 0x250C and cp <= 0x254B then return 0x2B end
+    if cp == 0x2588 or cp == 0x25A0 then return 0x23 end   -- █ ■ → #
+    if cp == 0x25CF then return 0x2A end                    -- ● → *
     return 0x3F                            -- "?"
 end
 
