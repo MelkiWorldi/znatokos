@@ -48,9 +48,13 @@ local function matchEvent(task, ev)
         return true   -- всем — пусть сами решают перерисоваться
     end
     if KEY_EVENTS[name] then
-        if not task.window then return true end
         local f = wm.getFocused()
-        return f and f.id == task.window.id
+        if task.window then
+            return f and f.id == task.window.id
+        else
+            -- desktop (без окна) получает клавиши только когда нет фокусного окна
+            return f == nil
+        end
     end
     if MOUSE_EVENTS[name] then
         local x, y = ev[3], ev[4]
