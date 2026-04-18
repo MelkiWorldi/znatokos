@@ -134,7 +134,9 @@ function M.input(opts)
     function i:event(ev)
         if not self.focused then
             if ev[1] == "mouse_click" and ev[2] == 1 and M.hit(self, ev[3], ev[4]) then
-                self:onFocus(); return true
+                -- НЕ активируем self:onFocus напрямую — это путает focus-менеджер
+                -- модального окна. Возвращаем специальный сигнал.
+                return { requestFocus = self }
             end
             return false
         end

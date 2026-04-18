@@ -84,7 +84,10 @@ local function computeIconLayout()
     local sw, sh = term.getSize()
     local availW = sw - 2
     local cols = math.max(1, math.floor(availW / CELL_W))
-    local x = 2
+    -- сбрасываем прошлые координаты, чтобы iconAt не матчил старьё
+    for _, ic in ipairs(ICONS) do
+        ic._x, ic._y, ic._w, ic._h = nil, nil, nil, nil
+    end
     for i, ic in ipairs(ICONS) do
         local col = (i - 1) % cols
         local row = math.floor((i - 1) / cols)

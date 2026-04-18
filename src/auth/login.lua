@@ -64,17 +64,21 @@ local function firstRunSetup()
         while true do
             local ev = { os.pullEvent() }
             if ev[1] == "key" then
-                if ev[2] == keys.tab or ev[2] == keys.enter and current ~= btn and current ~= inp2 then
+                if ev[2] == keys.tab then
                     local handled, nxt = focus.handleKey(widgets_list, current, keys.tab, false)
                     if handled then current = nxt end
-                elseif ev[2] == keys.enter and (current == inp2 or current == btn) then
-                    _G._dialog_result = "submit"
+                elseif ev[2] == keys.enter then
+                    if current == inp1 then
+                        current:onBlur(); current = inp2; inp2:onFocus()
+                    elseif current == inp2 or current == btn then
+                        _G._dialog_result = "submit"
+                    end
                 end
             end
             if current then current:event(ev) end
             if _G._dialog_result == "submit" then
                 _G._dialog_result = nil
-                if inp1.value == inp2.value and #inp1.value > 0 then
+                if inp1.value == inp2.value and text.len(inp1.value) > 0 then
                     local ok, err = users.create("root", inp1.value, { uid = 0, gid = 0 })
                     if ok then
                         drawFrame("Готово — войдите как root")

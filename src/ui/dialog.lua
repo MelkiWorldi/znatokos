@@ -27,19 +27,33 @@ local function runModal(widgetList, initialFocus)
     while true do
         local ev = { os.pullEvent() }
         if ev[1] == "key" then
-            local shift = false
-            -- обработка Tab-навигации
-            local handled, nxt = focus.handleKey(widgetList, current, ev[2], shift)
-            if handled then current = nxt end
             if ev[2] == keys.escape then return nil end
+            local handled, nxt = focus.handleKey(widgetList, current, ev[2], false)
+            if handled then
+                -- focus уже применил onFocus/onBlur
+                current = nxt
+            end
         end
-        -- передаём событие текущему виджету
-        if current and current.event then current:event(ev) end
-        -- также дать всем виджетам шанс отреагировать на клик
+        if current and current.event then
+            local r = current:event(ev)
+            -- если виджет вернул {requestFocus = target}, переключаем фокус
+            if type(r) == "table" and r.requestFocus then
+                if current and current.onBlur then current:onBlur() end
+                current = r.requestFocus
+                if current.onFocus then current:onFocus() end
+            end
+        end
+        -- дать шанс остальным виджетам обработать клик
         for _, w in ipairs(widgetList) do
-            if w ~= current and w.event then w:event(ev) end
+            if w ~= current and w.event then
+                local r = w:event(ev)
+                if type(r) == "table" and r.requestFocus then
+                    if current and current.onBlur then current:onBlur() end
+                    current = r.requestFocus
+                    if current.onFocus then current:onFocus() end
+                end
+            end
         end
-        -- проверка флага выхода
         if _G._dialog_result ~= nil then
             local r = _G._dialog_result; _G._dialog_result = nil
             return r

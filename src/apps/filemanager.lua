@@ -15,13 +15,16 @@ return function(user)
 
     local function listPanel(p)
         local entries = { ".." }
-        for _, n in ipairs(vfs.list(p.cwd)) do entries[#entries + 1] = n end
-        table.sort(entries, function(a, b)
-            local ad = vfs.isDir(fs.combine(p.cwd, a))
-            local bd = vfs.isDir(fs.combine(p.cwd, b))
-            if ad ~= bd then return ad end
-            return a < b
-        end)
+        local ok, list = pcall(vfs.list, p.cwd)
+        if ok and type(list) == "table" then
+            for _, n in ipairs(list) do entries[#entries + 1] = n end
+            table.sort(entries, function(a, b)
+                local ad = vfs.isDir(fs.combine(p.cwd, a))
+                local bd = vfs.isDir(fs.combine(p.cwd, b))
+                if ad ~= bd then return ad end
+                return a < b
+            end)
+        end
         return entries
     end
 

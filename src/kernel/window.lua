@@ -239,7 +239,13 @@ function M.updateDrag(gx, gy)
     local ny = math.max(1, math.min(ph - 1 - w.h + 1, gy - drag.oy))
     if nx ~= w.x or ny ~= w.y then
         w.x = nx; w.y = ny
-        w.chrome.reposition(nx, ny)
+        if w.chrome then
+            w.chrome.reposition(nx, ny)
+            -- content живёт внутри chrome (относительная позиция 2,2) —
+            -- при reposition chrome его позиция в parent terminal обновляется автоматически
+        else
+            w.win.reposition(nx, ny)
+        end
         M.redrawAll()
     end
 end
@@ -277,9 +283,13 @@ end
 --------------------------------------------------------------
 function M.requestClose(id)
     if onClose then onClose(id) end
-    -- Убить задачу, которая владеет этим окном, чтобы не висела корутина
+    -- Убить задачу, которая владеет этим окном. Сам destroy произойдёт
+    -- в scheduler'е при обработке terminate_pid — не дублируем здесь.
     local ok, sched = pcall(znatokos.use, "kernel/scheduler")
-    if ok and sched.killByWindow then sched.killByWindow(id) end
+    if ok and sched.killByWindow and sched.killByWindow(id) then
+        return  -- scheduler сам удалит окно
+    end
+    -- Нет задачи (окно без владельца) — удалить напрямую
     M.destroy(id)
 end
 

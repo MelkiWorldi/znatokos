@@ -3,7 +3,7 @@
 -- а также pkg.manager для обновлений.
 return {
     name = "znatokos",
-    version = "0.1.0",
+    version = "0.2.0",
     root = "/znatokos",
     startup = "/startup.lua",
     files = {

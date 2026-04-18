@@ -82,10 +82,15 @@ function M.handleKey(items, current, key, shift)
             if nxt.onFocus then nxt:onFocus() end
             return true, nxt
         end
-    elseif key == keys.enter or key == keys.space then
+    elseif key == keys.space then
         if current and current.onActivate then
-            current:onActivate()
-            return true, current
+            current:onActivate(); return true, current
+        end
+    elseif key == keys.enter then
+        -- Для input'ов Enter обрабатывает сам виджет (вызывает onSubmit)
+        -- чтобы не дублировать; button активируется
+        if current and current.onActivate and current.onSubmit == nil then
+            current:onActivate(); return true, current
         end
     end
     return false, current

@@ -65,21 +65,20 @@ end
 function M.wrap(s, width)
     if width < 1 then return { s } end
     local out = {}
-    -- Разбиваем по \n сначала
     for paragraph in (s .. "\n"):gmatch("([^\n]*)\n") do
-        if paragraph == "" then
+        if paragraph == "" or not paragraph:find("%S") then
+            -- Пустая или whitespace-only строка сохраняется
             out[#out + 1] = ""
         else
-            local line = ""
-            local lineLen = 0
+            local line, lineLen = "", 0
+            local hadWord = false
             for word in paragraph:gmatch("%S+") do
+                hadWord = true
                 local wLen = M.len(word)
                 if lineLen == 0 then
-                    -- первое слово в строке; если слово длиннее width — режем
                     if wLen <= width then
                         line = word; lineLen = wLen
                     else
-                        -- долго — разбиваем посимвольно
                         for i = 1, wLen, width do
                             out[#out + 1] = M.sub(word, i, i + width - 1)
                         end
@@ -102,7 +101,8 @@ function M.wrap(s, width)
                     end
                 end
             end
-            if lineLen > 0 then out[#out + 1] = line end
+            if lineLen > 0 then out[#out + 1] = line
+            elseif not hadWord then out[#out + 1] = "" end
         end
     end
     return out

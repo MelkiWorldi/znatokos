@@ -5,7 +5,7 @@
 local DEFAULT_BASE = "https://raw.githubusercontent.com/your-user/znatokos/main/"
 local args = { ... }
 local BASE = args[1] or DEFAULT_BASE
-if not BASE:sub(-1) == "/" then BASE = BASE .. "/" end
+if BASE:sub(-1) ~= "/" then BASE = BASE .. "/" end
 
 local function info(msg, col)
     term.setTextColor(col or colors.white)

@@ -55,12 +55,18 @@ return function()
                 current = PALETTE[n == 0 and 10 or n]
             elseif c == "q" then return
             elseif c == "s" then
-                -- Сохраняем в /home/drawing.nfp
+                -- Сохраняем в /home/drawing.nfp (стандарт CC: hex-индекс цвета)
                 local f = fs.open("/home/drawing.nfp", "w")
                 for y = 1, h do
                     local row = {}
                     for x = 1, w do
-                        row[x] = canvas[y][x] and string.format("%x", math.floor(math.log(canvas[y][x]) / math.log(2))) or " "
+                        local col = canvas[y][x]
+                        if col and col > 0 then
+                            local idx = math.floor(math.log(col) / math.log(2))
+                            row[x] = string.format("%x", idx)
+                        else
+                            row[x] = " "
+                        end
                     end
                     f.writeLine(table.concat(row))
                 end

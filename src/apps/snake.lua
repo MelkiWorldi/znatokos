@@ -66,9 +66,16 @@ return function()
                       math.floor(h / 2) + 1)
     term.setTextColor(colors.red); term.write(msg)
     term.setTextColor(th.fg)
-    local hint = "Нажмите любую клавишу"
-    term.setCursorPos(math.floor((w - text.len(hint)) / 2) + 1,
+    local hint = "q — выход, любая клавиша — новая игра"
+    term.setCursorPos(math.max(1, math.floor((w - text.len(hint)) / 2) + 1),
                       math.floor(h / 2) + 3)
     term.write(hint)
-    os.pullEvent("key")
+    while true do
+        local _, key = os.pullEvent("key")
+        if key == keys.q or key == keys.escape then return end
+        if key == keys.enter or key == keys.space then
+            -- для простоты: выход, пользователь откроет заново
+            return
+        end
+    end
 end
