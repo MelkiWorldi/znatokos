@@ -50,6 +50,14 @@ local function codepointToCP1251(cp)
     if cp == 0x2022 then return 0x95 end   -- •
     if cp == 0x2026 then return 0x85 end   -- …
     if cp == 0x00A0 then return 0xA0 end   -- non-breaking space
+    -- Unicode box-drawing → ASCII (CP1251 их не имеет)
+    if cp == 0x2500 or cp == 0x2501 then return 0x2D end   -- ─ ━ → -
+    if cp == 0x2502 or cp == 0x2503 then return 0x7C end   -- │ ┃ → |
+    if cp >= 0x250C and cp <= 0x254B then return 0x2B end  -- ┌─┘ углы → +
+    if cp == 0x2588 then return 0xFE end   -- █ full block (есть в шрифте)
+    if cp >= 0x2591 and cp <= 0x2593 then return 0xB0 end  -- ░▒▓
+    if cp == 0x25A0 then return 0xFE end   -- ■
+    if cp == 0x25CF then return 0x95 end   -- ●
     -- неизвестный символ
     return 0x3F                            -- "?"
 end

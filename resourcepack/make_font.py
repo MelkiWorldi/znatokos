@@ -27,9 +27,9 @@ except ImportError:
     print("Нужен Pillow: pip install pillow", file=sys.stderr)
     sys.exit(1)
 
-CELL_W, CELL_H = 8, 12
+CELL_W, CELL_H = 8, 11           # FONT_WIDTH+2, FONT_HEIGHT+2
 GRID = 16
-IMG_W, IMG_H = CELL_W * GRID, CELL_H * GRID       # 128 × 192
+IMG_W, IMG_H = 256, 256          # фиксированный размер текстуры в CC:Tweaked
 GLYPH_W, GLYPH_H = 6, 9
 GLYPH_OFF = (1, 1)
 
@@ -98,29 +98,87 @@ def draw_glyphs(img: Image.Image, font: ImageFont.FreeTypeFont,
         draw.text((cx, cy - 1), ch, font=font, fill=(255, 255, 255, 255))
 
 
+def clear_cells(img: Image.Image, codes) -> None:
+    """Стирает ячейки (делает их прозрачными) перед отрисовкой новых глифов."""
+    for code in codes:
+        cx, cy = (code % GRID) * CELL_W, (code // GRID) * CELL_H
+        for x in range(cx, cx + CELL_W):
+            for y in range(cy, cy + CELL_H):
+                img.putpixel((x, y), (0, 0, 0, 0))
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Сгенерировать кириллический term_font.png")
-    p.add_argument("--base", type=Path, help="исходный term_font.png (ASCII)")
+    p.add_argument("--base", type=Path,
+                   default=Path("original_term_font.png"),
+                   help="исходный term_font.png (ASCII)")
     p.add_argument("--font", type=str, help="путь к моно-TTF с кириллицей")
+    p.add_argument("--size", type=int, default=8, help="размер TTF в пунктах")
     p.add_argument("--out", type=Path,
                    default=Path("assets/computercraft/textures/gui/term_font.png"))
     args = p.parse_args()
 
-    img = Image.new("RGBA", (IMG_W, IMG_H), (0, 0, 0, 0))
-
-    if args.base:
-        blit_ascii_base(img, args.base)
-        ascii_fallback = False
+    if args.base and args.base.exists():
+        img = Image.open(args.base).convert("RGBA")
+        if img.size != (IMG_W, IMG_H):
+            raise ValueError(f"base font {img.size} != {(IMG_W, IMG_H)}")
+        clear_cells(img, CP1251_CHARS.keys())
+        print(f"Основа: {args.base}  ({img.size[0]}×{img.size[1]})")
     else:
-        ascii_fallback = True
+        img = Image.new("RGBA", (IMG_W, IMG_H), (0, 0, 0, 0))
+        print("Основа: пустая")
 
-    font = load_system_font(args.font)
-    draw_glyphs(img, font, CP1251_CHARS, draw_ascii_fallback=ascii_fallback)
+    # Пытаемся использовать ручные битмапы
+    try:
+        from cyrillic_bitmaps import GLYPHS
+        print(f"Используем ручные битмапы: {len(GLYPHS)} глифов")
+    except ImportError:
+        GLYPHS = {}
+
+    white = (255, 255, 255, 255)
+    drawn = 0
+    ttf_fallback_chars: dict[int, str] = {}
+
+    for code, ch in CP1251_CHARS.items():
+        bitmap = GLYPHS.get(ch)
+        if bitmap:
+            cx = (code % GRID) * CELL_W + GLYPH_OFF[0]
+            cy = (code // GRID) * CELL_H + GLYPH_OFF[1]
+            for y, row in enumerate(bitmap):
+                for x, pix in enumerate(row):
+                    if pix == "#":
+                        img.putpixel((cx + x, cy + y), white)
+            drawn += 1
+        else:
+            ttf_fallback_chars[code] = ch
+
+    # Остальные символы (если есть) — через TTF без AA
+    if ttf_fallback_chars:
+        font = ImageFont.truetype(
+            args.font or next(
+                (p for p in FONT_CANDIDATES if p and _try_path(p)),
+                None) or FONT_CANDIDATES[0],
+            args.size,
+        )
+        draw = ImageDraw.Draw(img)
+        draw.fontmode = "1"
+        for code, ch in ttf_fallback_chars.items():
+            cx = (code % GRID) * CELL_W + GLYPH_OFF[0]
+            cy = (code // GRID) * CELL_H + GLYPH_OFF[1]
+            draw.text((cx, cy - 1), ch, font=font, fill=white)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     img.save(args.out)
     print(f"Записан {args.out}  ({IMG_W}×{IMG_H})")
-    print(f"Кириллических глифов: {len(CP1251_CHARS)}")
+    print(f"Нарисовано битмапами: {drawn}, из TTF: {len(ttf_fallback_chars)}")
+
+
+def _try_path(p: str) -> bool:
+    try:
+        ImageFont.truetype(p, 8)
+        return True
+    except (OSError, IOError):
+        return False
 
 
 if __name__ == "__main__":

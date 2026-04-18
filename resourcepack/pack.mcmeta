@@ -1,6 +1,7 @@
 {
   "pack": {
-    "pack_format": 15,
+    "pack_format": 34,
+    "supported_formats": [15, 34],
     "description": "ZnatokOS Cyrillic font for CC: Tweaked (Windows-1251)"
   }
 }

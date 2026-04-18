@@ -10,6 +10,7 @@ local CMDS = {
     "ps", "kill", "top",
     "pkg", "net", "chat", "sendfile",
     "passwd", "useradd", "whoami", "logout",
+    "monsetup",
 }
 
 local loaded = {}

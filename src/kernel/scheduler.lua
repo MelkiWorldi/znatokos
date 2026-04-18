@@ -1,7 +1,5 @@
--- Планировщик задач. Каждая задача — корутина, зарегистрированная с pid.
--- События фильтруются: задача видит либо свои направленные события
--- (mouse_* — только если клик в её окне; ipc — по pid), либо глобальные
--- (timer, char, key — все или по фокусу).
+-- Планировщик задач. Каждая задача — корутина с pid.
+-- События фильтруются по окну/фокусу. Оконное hit-test учитывает chrome.
 local log = znatokos.use("kernel/log")
 local wm  = znatokos.use("kernel/window")
 
@@ -10,31 +8,81 @@ local tasks = {}
 local nextPid = 1
 local running = false
 
+-- Мышиные события
+local MOUSE_EVENTS = {
+    mouse_click = true, mouse_drag = true, mouse_up = true, mouse_scroll = true,
+}
+-- События клавиатуры
+local KEY_EVENTS = {
+    char = true, key = true, key_up = true, paste = true,
+}
+-- Системные события, которые раздаём всем
+local BROADCAST_EVENTS = {
+    terminate = true, timer = true, alarm = true, redstone = true,
+    peripheral = true, peripheral_detach = true, rednet_message = true,
+    modem_message = true, ["znatokos:resize"] = true, term_resize = true,
+    monitor_resize = true,
+}
+
+local function hitWindow(x, y)
+    local hit = nil
+    for _, ow in pairs(wm.list()) do
+        if ow.visible and x >= ow.x and x <= ow.x + ow.w - 1
+           and y >= ow.y and y <= ow.y + ow.h - 1 then
+            hit = ow
+        end
+    end
+    return hit
+end
+
 local function matchEvent(task, ev)
     local name = ev[1]
     if name == "terminate" then return true end
     if name == "znatokos:ipc" then
         return ev[2] == task.pid or ev[2] == "*"
     end
-    if name == "char" or name == "key" or name == "key_up" or name == "paste" then
-        -- клавиатурные события идут в фокусное окно
+    if name == "znatokos:redraw" then
+        return not task.window   -- только desktop
+    end
+    if name == "znatokos:resize" or name == "term_resize" or name == "monitor_resize" then
+        return true   -- всем — пусть сами решают перерисоваться
+    end
+    if KEY_EVENTS[name] then
+        if not task.window then return true end
         local f = wm.getFocused()
-        return f and task.window and f.id == task.window.id
+        return f and f.id == task.window.id
     end
-    if name == "mouse_click" or name == "mouse_drag" or name == "mouse_up" or name == "mouse_scroll" then
-        -- мышь — в окно под курсором
-        if not task.window or not task.window.visible then return false end
+    if MOUSE_EVENTS[name] then
         local x, y = ev[3], ev[4]
-        local w = task.window
-        return x >= w.x and x <= w.x + w.w - 1 and y >= w.y and y <= w.y + w.h - 1
+        local hit = hitWindow(x, y)
+        if task.window then
+            return hit and task.window.id == hit.id
+        else
+            return hit == nil
+        end
     end
-    if name == "timer" or name == "alarm" or name == "redstone" then
-        return true
-    end
-    -- системные события (peripheral, modem_message, rednet_message...) раздаём всем
+    if BROADCAST_EVENTS[name] then return true end
     return true
 end
 
+--------------------------------------------------------------
+-- Управление term.redirect при resume
+--------------------------------------------------------------
+local nativeTerm = term.current()
+function M.setNativeTerm(t) nativeTerm = t end
+function M.getNativeTerm() return nativeTerm end
+
+local function resumeTask(task, ...)
+    local target = task.window and task.window.win or nativeTerm
+    local prev = term.redirect(target)
+    local ok, err = coroutine.resume(task.co, ...)
+    term.redirect(prev)
+    return ok, err
+end
+
+--------------------------------------------------------------
+-- spawn / kill
+--------------------------------------------------------------
 function M.spawn(opts)
     local pid = nextPid; nextPid = nextPid + 1
     local task = {
@@ -49,8 +97,7 @@ function M.spawn(opts)
     }
     tasks[pid] = task
     log.info(("spawn pid=%d name=%s"):format(pid, task.name))
-    -- Первый шаг запуска
-    local ok, err = coroutine.resume(task.co, table.unpack(opts.args or {}))
+    local ok, err = resumeTask(task, table.unpack(opts.args or {}))
     if not ok then
         task.status = "error"
         log.error(("pid=%d error: %s"):format(pid, tostring(err)))
@@ -67,9 +114,7 @@ function M.kill(pid)
     local t = tasks[pid]; if not t then return false end
     os.queueEvent("terminate_pid", pid)
     tasks[pid] = nil
-    if t.window then
-        wm.destroy(t.window.id)
-    end
+    if t.window then wm.destroy(t.window.id) end
     log.info(("kill pid=%d"):format(pid))
     return true
 end
@@ -80,30 +125,45 @@ function M.list()
     table.sort(arr, function(a, b) return a.pid < b.pid end)
     return arr
 end
-
 function M.get(pid) return tasks[pid] end
+function M.count() local n = 0; for _ in pairs(tasks) do n = n + 1 end; return n end
 
-function M.count()
-    local n = 0
-    for _ in pairs(tasks) do n = n + 1 end
-    return n
-end
-
--- Основной цикл планировщика. Блокирующий.
+--------------------------------------------------------------
+-- Основной цикл планировщика
+--------------------------------------------------------------
 function M.run()
     running = true
     while running and M.count() > 0 do
         local ev = { os.pullEventRaw() }
-        if ev[1] == "terminate" then
-            running = false
-            break
+        if ev[1] == "terminate" then running = false; break end
+
+        -- monitor_touch (правый клик по монитору) = mouse_click кнопкой 1
+        if ev[1] == "monitor_touch" then
+            ev = { "mouse_click", 1, ev[3], ev[4] }
         end
+
+        -- peripheral / peripheral_detach передаём display для hot-plug.
+        -- monitor_resize также идёт в display, чтобы переопределить размер plane.
+        if ev[1] == "peripheral" or ev[1] == "peripheral_detach"
+           or ev[1] == "monitor_resize" then
+            local ok, display = pcall(znatokos.use, "kernel/display")
+            if ok and display.onPeripheralEvent then
+                pcall(display.onPeripheralEvent, ev[1], ev[2])
+            end
+        end
+
+        -- term_resize / monitor_resize — поднимаем znatokos:resize
+        if ev[1] == "term_resize" or ev[1] == "monitor_resize" then
+            os.queueEvent("znatokos:resize")
+        end
+
         if ev[1] == "terminate_pid" then
-            -- kill одного task — уже обработано в M.kill
+            -- handled in M.kill
         else
             for pid, task in pairs(tasks) do
-                if matchEvent(task, ev) and (task.filter == nil or task.filter == ev[1] or ev[1] == "terminate") then
-                    local ok, err = coroutine.resume(task.co, table.unpack(ev))
+                if matchEvent(task, ev)
+                   and (task.filter == nil or task.filter == ev[1] or ev[1] == "terminate") then
+                    local ok, err = resumeTask(task, table.unpack(ev))
                     if not ok then
                         log.error(("pid=%d crash: %s"):format(pid, tostring(err)))
                         if task.window then wm.destroy(task.window.id) end

@@ -26,7 +26,8 @@ function T.section(name)
 end
 _G._T = T
 
-local suites = { "test_shell", "test_sha256", "test_vfs", "test_pkg" }
+local suites = { "test_shell", "test_sha256", "test_vfs", "test_pkg",
+                 "test_text", "test_layout", "test_focus" }
 for _, s in ipairs(suites) do
     T.section(s)
     local ok, err = pcall(function()

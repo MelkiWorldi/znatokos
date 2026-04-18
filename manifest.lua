@@ -16,17 +16,22 @@ return {
         "src/kernel/window.lua",
         "src/kernel/ipc.lua",
         "src/kernel/log.lua",
+        "src/kernel/display.lua",
         -- FS
         "src/fs/vfs.lua",
         "src/fs/paths.lua",
         -- Util
         "src/util/cyrillic.lua",
+        "src/util/text.lua",
         -- Auth
         "src/auth/sha256.lua",
         "src/auth/users.lua",
         "src/auth/login.lua",
         -- UI
         "src/ui/theme.lua",
+        "src/ui/layout.lua",
+        "src/ui/focus.lua",
+        "src/ui/pointer.lua",
         "src/ui/widgets.lua",
         "src/ui/dialog.lua",
         "src/ui/desktop.lua",
@@ -59,6 +64,7 @@ return {
         "src/shell/commands/useradd.lua",
         "src/shell/commands/whoami.lua",
         "src/shell/commands/logout.lua",
+        "src/shell/commands/monsetup.lua",
         -- Net
         "src/net/rednet.lua",
         "src/net/chat.lua",
@@ -82,5 +88,8 @@ return {
         "tests/test_sha256.lua",
         "tests/test_vfs.lua",
         "tests/test_pkg.lua",
+        "tests/test_text.lua",
+        "tests/test_layout.lua",
+        "tests/test_focus.lua",
     },
 }

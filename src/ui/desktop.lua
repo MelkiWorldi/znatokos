@@ -1,4 +1,5 @@
--- Рабочий стол. Иконки, меню «Пуск», запуск приложений в окнах.
+-- Рабочий стол. Адаптивная сетка иконок, контекстные меню,
+-- поддержка term_resize, интеграция с window chrome (close-button, drag).
 local theme   = znatokos.use("ui/theme")
 local wm      = znatokos.use("kernel/window")
 local sched   = znatokos.use("kernel/scheduler")
@@ -7,102 +8,143 @@ local dialog  = znatokos.use("ui/dialog")
 local taskbar = znatokos.use("ui/taskbar")
 local paths   = znatokos.use("fs/paths")
 local log     = znatokos.use("kernel/log")
+local focus   = znatokos.use("ui/focus")
+local pointer = znatokos.use("ui/pointer")
+local layout  = znatokos.use("ui/layout")
+local text    = znatokos.use("util/text")
 
 local M = {}
 
 local ICONS = {
-    { label = "Терминал",  col = colors.lime,     app = "terminal"    },
-    { label = "Файлы",     col = colors.yellow,   app = "filemanager" },
-    { label = "Настройки", col = colors.lightBlue,app = "settings"    },
-    { label = "Часы",      col = colors.white,    app = "clock"       },
-    { label = "Калькулятор", col = colors.orange, app = "calc"        },
-    { label = "Змейка",    col = colors.green,    app = "snake"       },
-    { label = "Paint",     col = colors.pink,     app = "paint"       },
-    { label = "Чат",       col = colors.magenta,  app = "chat"        },
+    { label = "Терминал",    col = colors.lime,      app = "terminal"    },
+    { label = "Файлы",       col = colors.yellow,    app = "filemanager" },
+    { label = "Настройки",   col = colors.lightBlue, app = "settings"    },
+    { label = "Часы",        col = colors.white,     app = "clock"       },
+    { label = "Калькулятор", col = colors.orange,    app = "calc"        },
+    { label = "Змейка",      col = colors.green,     app = "snake"       },
+    { label = "Paint",       col = colors.pink,      app = "paint"       },
+    { label = "Чат",         col = colors.magenta,   app = "chat"        },
 }
 
+local focusedIconIdx = 1  -- для focus-ring
+
+--------------------------------------------------------------
+-- Запуск приложения в окне
+--------------------------------------------------------------
 local function runApp(appName, user, title)
     local appPath = paths.APPS .. "/" .. appName .. ".lua"
     if not fs.exists(appPath) then
-        -- возможно, это команда
         appPath = paths.COMMANDS .. "/" .. appName .. ".lua"
     end
     if not fs.exists(appPath) then
         dialog.message("Ошибка", "Приложение не найдено:\n" .. appName)
         return
     end
-    local win = wm.create({ title = title or appName, owner = user.user,
-                            w = 45, h = 15, x = 3, y = 2 })
+    local sw, sh = term.getSize()
+    local w = math.min(60, math.max(30, math.floor(sw * 0.7)))
+    local h = math.min(20, math.max(12, math.floor((sh - 1) * 0.7)))
+    local win = wm.create({
+        title = title or appName, owner = user.user,
+        w = w, h = h,
+    })
     sched.spawn({
-        name = appName,
-        owner = user.user,
-        window = win,
+        name = appName, owner = user.user, window = win,
         fn = function()
-            local prev = term.redirect(win.win)
             wm.focus(win.id)
             local ok, err = pcall(function()
                 local fn, e = loadfile(appPath, nil, _G)
                 if not fn then error(e) end
                 fn(user)
             end)
-            term.redirect(prev)
             if not ok then
                 log.error("app " .. appName .. ": " .. tostring(err))
-                dialog.message("Сбой приложения", tostring(err))
             end
             wm.destroy(win.id)
         end,
     })
 end
 
-local function drawIcons(user)
-    local th = theme.get()
+--------------------------------------------------------------
+-- Адаптивная сетка иконок
+--------------------------------------------------------------
+local ICON_W, ICON_H = 2, 2      -- цветной блок
+local CELL_W, CELL_H = 14, 4     -- шаг (с подписью)
+local TOP_PAD = 2                -- место под заголовок
+
+local function computeIconLayout()
     local sw, sh = term.getSize()
+    local availW = sw - 2
+    local cols = math.max(1, math.floor(availW / CELL_W))
+    local x = 2
+    for i, ic in ipairs(ICONS) do
+        local col = (i - 1) % cols
+        local row = math.floor((i - 1) / cols)
+        ic._x = 2 + col * CELL_W
+        ic._y = TOP_PAD + 1 + row * CELL_H
+        ic._w = ICON_W; ic._h = ICON_H
+    end
+end
+
+local function drawIcons(user)
+    computeIconLayout()
+    local th = theme.get()
     term.setBackgroundColor(th.desktop); term.clear()
     term.setTextColor(colors.white)
-    term.setCursorPos(2, 1); term.write("ЗнатокOS — " .. user.user)
-    local x, y = 2, 3
+    local title = "ЗнатокOS — " .. user.user
+    term.setCursorPos(2, 1); term.write(title)
     for i, ic in ipairs(ICONS) do
+        local isFocus = (i == focusedIconIdx)
+        -- цветной блок
         term.setBackgroundColor(ic.col); term.setTextColor(colors.black)
-        term.setCursorPos(x, y);     term.write("  ")
-        term.setCursorPos(x, y + 1); term.write("  ")
+        term.setCursorPos(ic._x, ic._y);     term.write("  ")
+        term.setCursorPos(ic._x, ic._y + 1); term.write("  ")
+        -- рамка фокуса
+        if isFocus then
+            term.setBackgroundColor(th.desktop); term.setTextColor(th.accent)
+            term.setCursorPos(ic._x - 1, ic._y - 1); term.write("+--+")
+            term.setCursorPos(ic._x - 1, ic._y);     term.write("|")
+            term.setCursorPos(ic._x + 2, ic._y);     term.write("|")
+            term.setCursorPos(ic._x - 1, ic._y + 1); term.write("|")
+            term.setCursorPos(ic._x + 2, ic._y + 1); term.write("|")
+            term.setCursorPos(ic._x - 1, ic._y + 2); term.write("+--+")
+        end
+        -- подпись
         term.setBackgroundColor(th.desktop); term.setTextColor(colors.white)
-        local label = ic.label
-        if #label > 12 then label = label:sub(1, 12) end
-        term.setCursorPos(x - math.floor((#label - 2) / 2), y + 2)
-        term.write(label)
-        ic._x = x; ic._y = y; ic._w = 2; ic._h = 2
-        x = x + 12
-        if x + 2 > sw then x = 2; y = y + 4 end
+        local label = text.ellipsize(ic.label, CELL_W - 2)
+        local lx = ic._x + math.floor((ICON_W - text.len(label)) / 2)
+        term.setCursorPos(lx, ic._y + 2); term.write(label)
     end
     taskbar.draw()
 end
 
 local function iconAt(mx, my)
-    for _, ic in ipairs(ICONS) do
+    for i, ic in ipairs(ICONS) do
         if ic._x and mx >= ic._x and mx <= ic._x + ic._w - 1
            and my >= ic._y and my <= ic._y + ic._h - 1 then
-            return ic
+            return ic, i
         end
     end
     return nil
 end
 
+--------------------------------------------------------------
+-- Start-меню и контекстные меню
+--------------------------------------------------------------
 local function startMenu(user)
     local sw, sh = term.getSize()
     local items = {
-        { label = "Терминал",   action = function() runApp("terminal", user, "Терминал") end },
-        { label = "Файлы",      action = function() runApp("filemanager", user, "Файлы") end },
-        { label = "Настройки",  action = function() runApp("settings", user, "Настройки") end },
+        { label = "Терминал",    action = function() runApp("terminal", user, "Терминал") end },
+        { label = "Файлы",       action = function() runApp("filemanager", user, "Файлы") end },
+        { label = "Настройки",   action = function() runApp("settings", user, "Настройки") end },
         { label = "Калькулятор", action = function() runApp("calc", user, "Калькулятор") end },
-        { label = "Часы",       action = function() runApp("clock", user, "Часы") end },
-        { label = "Змейка",     action = function() runApp("snake", user, "Змейка") end },
-        { label = "Paint",      action = function() runApp("paint", user, "Paint") end },
-        { label = "Чат (сеть)", action = function() runApp("chat", user, "Чат") end },
-        { label = "─────────", action = function() end },
-        { label = "Выход",      action = function() _G._znatokos_exit = true end },
-        { label = "Reboot",     action = function() os.reboot() end },
-        { label = "Shutdown",   action = function() os.shutdown() end },
+        { label = "Часы",        action = function() runApp("clock", user, "Часы") end },
+        { label = "Змейка",      action = function() runApp("snake", user, "Змейка") end },
+        { label = "Paint",       action = function() runApp("paint", user, "Paint") end },
+        { label = "Чат (сеть)",  action = function() runApp("chat", user, "Чат") end },
+        { label = "─────────",   action = function() end },
+        { label = "Выход",       action = function() _G._znatokos_exit = true end },
+        { label = "Reboot",      action = function() os.reboot() end },
+        { label = "Shutdown",    action = function() os.shutdown() end },
     }
     local h = #items
     local y = sh - h - 1
@@ -114,26 +156,91 @@ local function startMenu(user)
         if ev[1] == "mouse_click" then
             local mx, my = ev[3], ev[4]
             if mx >= 1 and mx <= m.w and my >= y and my <= y + h - 1 then
-                m:event(ev)
-                return
+                m:event(ev); return
             else
                 return
             end
-        elseif ev[1] == "key" and (ev[2] == keys.escape or ev[2] == keys.enter) then
-            m:event(ev); return
+        elseif ev[1] == "key" and (ev[2] == keys.escape) then
+            return
         else
             m:event(ev)
+            if ev[1] == "key" and ev[2] == keys.enter then return end
         end
     end
 end
 
+local function iconContextMenu(user, ic, x, y)
+    local items = {
+        { label = "Открыть",    action = function() runApp(ic.app, user, ic.label) end },
+        { label = "Свойства",   action = function()
+            dialog.message("Свойства", "Название: " .. ic.label .. "\nПриложение: " .. ic.app)
+        end },
+    }
+    local m = widgets.menu({ x = x, y = y, items = items })
+    m:draw(term)
+    while true do
+        local ev = { os.pullEvent() }
+        if ev[1] == "mouse_click" then
+            local mx, my = ev[3], ev[4]
+            if mx >= m.x and mx <= m.x + m.w - 1 and my >= m.y and my <= m.y + m.h - 1 then
+                m:event(ev); return
+            else return end
+        elseif ev[1] == "key" and ev[2] == keys.escape then return
+        elseif ev[1] == "key" and ev[2] == keys.enter then m:event(ev); return
+        else m:event(ev) end
+    end
+end
+
+local function desktopContextMenu(user, x, y)
+    local items = {
+        { label = "Обновить",           action = function() drawIcons(user) end },
+        { label = "Видимый курсор: " .. (pointer.isEnabled() and "Вкл" or "Выкл"),
+          action = function() pointer.setEnabled(not pointer.isEnabled()) end },
+        { label = "Настройки",          action = function() runApp("settings", user, "Настройки") end },
+    }
+    local m = widgets.menu({ x = x, y = y, items = items })
+    m:draw(term)
+    while true do
+        local ev = { os.pullEvent() }
+        if ev[1] == "mouse_click" then
+            local mx, my = ev[3], ev[4]
+            if mx >= m.x and mx <= m.x + m.w - 1 and my >= m.y and my <= m.y + m.h - 1 then
+                m:event(ev); drawIcons(user); return
+            else return end
+        elseif ev[1] == "key" and ev[2] == keys.escape then return
+        elseif ev[1] == "key" and ev[2] == keys.enter then m:event(ev); drawIcons(user); return
+        else m:event(ev) end
+    end
+end
+
+--------------------------------------------------------------
+-- focus-ring навигация по иконкам
+--------------------------------------------------------------
+local function iconFocusMove(direction)
+    local cols
+    do
+        local sw = term.getSize()
+        cols = math.max(1, math.floor((sw - 2) / CELL_W))
+    end
+    local new = focusedIconIdx
+    if direction == "right" then new = new + 1
+    elseif direction == "left" then new = new - 1
+    elseif direction == "down" then new = new + cols
+    elseif direction == "up" then new = new - cols
+    end
+    if new >= 1 and new <= #ICONS then focusedIconIdx = new end
+end
+
+--------------------------------------------------------------
+-- основной цикл
+--------------------------------------------------------------
 function M.run(user)
     _G._znatokos_exit = false
     drawIcons(user)
-    -- фоновая задача для часов
+
+    -- фоновая задача: часы в taskbar
     sched.spawn({
-        name = "taskbar-clock",
-        owner = user.user,
+        name = "taskbar-clock", owner = user.user,
         fn = function()
             while true do
                 sleep(10)
@@ -141,49 +248,88 @@ function M.run(user)
             end
         end,
     })
-    -- основной цикл событий рабочего стола
+
+    -- обработчик onClose окон — просто destroy
+    wm.setOnClose(function(id) end)
+
     sched.spawn({
-        name = "desktop",
-        owner = user.user,
+        name = "desktop", owner = user.user,
         fn = function()
-            local lastClick = { x = 0, y = 0, t = 0 }
             while not _G._znatokos_exit do
                 taskbar.draw()
                 local ev = { os.pullEvent() }
-                if ev[1] == "mouse_click" and ev[2] == 1 then
-                    local mx, my = ev[3], ev[4]
-                    local tb = taskbar.handleClick(mx, my)
-                    if tb == "start" then
-                        startMenu(user)
-                        drawIcons(user)
-                    elseif tb == "window" then
-                        -- focus уже сделан
-                    elseif tb == "clock" then
-                        dialog.message("Часы", textutils.formatTime(os.time(), true)
-                            .. "\nДень: " .. os.day())
-                        drawIcons(user)
+                if ev[1] == "mouse_click" then
+                    local btn, mx, my = ev[2], ev[3], ev[4]
+                    pointer.onMouseClick()
+                    -- сначала проверим окно (клик мог попасть в title bar [X] / drag)
+                    local w, hitType = wm.hitTest(mx, my)
+                    if w then
+                        if btn == 1 and hitType == "close" and w.closable then
+                            wm.requestClose(w.id)
+                        elseif btn == 1 and hitType == "title" then
+                            wm.focus(w.id)
+                            wm.beginDrag(w.id, mx, my)
+                        elseif btn == 1 and hitType == "frame" then
+                            wm.focus(w.id)
+                        end
+                        -- content/title клики передадутся соответствующему таску
                     else
-                        local ic = iconAt(mx, my)
-                        if ic then
-                            local now = os.clock()
-                            if now - lastClick.t < 0.5
-                               and math.abs(mx - lastClick.x) <= 1
-                               and math.abs(my - lastClick.y) <= 1 then
-                                runApp(ic.app, user, ic.label)
-                                drawIcons(user)
-                                lastClick.t = 0
+                        -- клик в пустом пространстве desktop
+                        local tb = taskbar.handleClick(mx, my)
+                        if tb == "start" then
+                            startMenu(user); drawIcons(user)
+                        elseif tb == "clock" then
+                            dialog.message("Часы", textutils.formatTime(os.time(), true)
+                                .. "\nДень: " .. os.day())
+                            drawIcons(user)
+                        elseif tb == "window" then
+                            -- focus уже сделан в taskbar
+                        else
+                            local ic, idx = iconAt(mx, my)
+                            if ic then
+                                focusedIconIdx = idx
+                                if btn == 1 then
+                                    runApp(ic.app, user, ic.label)
+                                elseif btn == 2 then
+                                    iconContextMenu(user, ic, mx, my)
+                                    drawIcons(user)
+                                end
                             else
-                                lastClick = { x = mx, y = my, t = now }
+                                if btn == 2 then
+                                    desktopContextMenu(user, mx, my)
+                                end
                             end
                         end
                     end
-                elseif ev[1] == "key" and ev[2] == keys.f10 then
-                    startMenu(user); drawIcons(user)
-                elseif ev[1] == "key" and ev[2] == keys.tab then
-                    -- Ctrl+Tab переключение окон
-                    -- CC посылает отдельные key-события; проверяем глобальный leftCtrl
-                    -- Упрощённо: Tab без модификаторов тоже переключает
-                    wm.nextWindow()
+                elseif ev[1] == "mouse_drag" then
+                    if wm.isDragging() then wm.updateDrag(ev[3], ev[4]) end
+                elseif ev[1] == "mouse_up" then
+                    wm.endDrag()
+                elseif ev[1] == "key" then
+                    local k = ev[2]
+                    if pointer.isEnabled() and pointer.handleKey(k, false) then
+                        -- handled
+                    elseif k == keys.f10 then
+                        startMenu(user); drawIcons(user)
+                    elseif k == keys.tab then
+                        if #wm.list() > 0 then wm.nextWindow()
+                        else
+                            focusedIconIdx = (focusedIconIdx % #ICONS) + 1
+                            drawIcons(user)
+                        end
+                    elseif k == keys.up    then iconFocusMove("up"); drawIcons(user)
+                    elseif k == keys.down  then iconFocusMove("down"); drawIcons(user)
+                    elseif k == keys.left  then iconFocusMove("left"); drawIcons(user)
+                    elseif k == keys.right then iconFocusMove("right"); drawIcons(user)
+                    elseif k == keys.enter or k == keys.space then
+                        local ic = ICONS[focusedIconIdx]
+                        if ic then runApp(ic.app, user, ic.label) end
+                    end
+                elseif ev[1] == "znatokos:redraw" then
+                    drawIcons(user)
+                elseif ev[1] == "znatokos:resize" or ev[1] == "term_resize" then
+                    wm.reflow()
+                    drawIcons(user)
                 end
             end
         end,
