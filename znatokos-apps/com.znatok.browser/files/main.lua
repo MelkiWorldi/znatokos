@@ -26,10 +26,23 @@ local link   = loadLib("link.lua")
 local form   = loadLib("form.lua")
 local js     = loadLib("js.lua")
 local tabs   = loadLib("tabs.lua")
+local search = loadLib("search.lua")
+-- Имя `bmstore`, чтобы не конфликтовать с глобальным `store`.
+local bmstore = loadLib("store.lua")
 
 -- Пробрасываем url-модуль в link.lua (у link.lua нет require в CC).
 if link and link._setUrlLib and urlLib then
     link._setUrlLib(urlLib)
+end
+
+-- Пробрасываем url-модуль в search.lua по той же причине.
+if search and search._setUrlLib and urlLib then
+    search._setUrlLib(urlLib)
+end
+
+-- Инициализация FS-хранилища закладок/истории (если модуль доступен).
+if bmstore and user and user.home then
+    pcall(bmstore.init, user.home)
 end
 
 -- ---------------------------------------------------------------
@@ -188,6 +201,23 @@ local function drawContent(g)
     end
 end
 
+-- Подсказки горячих клавиш, подбираемые по доступной ширине.
+local FOOTER_HINTS = {
+    "Esc выход  Ctrl+T новая  Ctrl+W закрыть  Ctrl+D закладка  Ctrl+H история",
+    "Esc выход  Ctrl+T новая  Ctrl+D закладка  Ctrl+H история",
+    "Ctrl+T новая  Ctrl+D закладка  Ctrl+H история",
+    "Ctrl+D закладка  Ctrl+H история",
+    "Ctrl+D  Ctrl+H",
+}
+
+local function pickFooterHint(maxW)
+    if maxW <= 0 then return "" end
+    for _, h in ipairs(FOOTER_HINTS) do
+        if #h <= maxW then return h end
+    end
+    return ""
+end
+
 local function drawStatus(g)
     local tab = currentTab()
     term.setCursorPos(1, g.statusY)
@@ -197,7 +227,25 @@ local function drawStatus(g)
     local h = tab.history
     if h.idx > 1 then crumb = crumb .. "<" else crumb = crumb .. " " end
     if h.idx < #h.stack then crumb = crumb .. ">" else crumb = crumb .. " " end
-    local s = crumb .. " Статус: " .. tostring(tab.status)
+
+    local bmMark = ""
+    if bmstore and user and user.home and tab.url and tab.url ~= "" then
+        local ok, isBm = pcall(bmstore.isBookmarked, user.home, tab.url)
+        if ok and isBm then bmMark = "[*] " end
+    end
+
+    local left = crumb .. " " .. bmMark .. "Статус: " .. tostring(tab.status)
+    -- Справа — подсказки, если осталось место (минимум 2 пробела-разделителя).
+    local roomForHint = g.w - #left - 2
+    local hint = pickFooterHint(roomForHint)
+    local s
+    if hint ~= "" then
+        local pad = g.w - #left - #hint
+        if pad < 1 then pad = 1 end
+        s = left .. string.rep(" ", pad) .. hint
+    else
+        s = left
+    end
     if #s > g.w then s = s:sub(1, g.w) end
     s = s .. string.rep(" ", g.w - #s)
     term.write(s)
@@ -263,7 +311,17 @@ local function navigate(u, opts)
     end
 
     if urlLib and urlLib.isUrl and not urlLib.isUrl(u) then
-        u = "http://" .. u
+        -- Если ввод не похож на URL — трактуем как поисковый запрос.
+        -- Эвристика: есть пробел или отсутствует точка — точно поиск.
+        -- Иначе (например "example.com") — добавляем схему http://.
+        local looksLikeHost = (not u:find("%s")) and u:find("%.") ~= nil
+        if looksLikeHost then
+            u = "http://" .. u
+        elseif search and search.buildSearchUrl then
+            u = search.buildSearchUrl(u, "ddg", urlLib)
+        else
+            u = "http://" .. u
+        end
     end
 
     tab.status = "загрузка " .. u .. "..."
@@ -341,6 +399,11 @@ local function navigate(u, opts)
     local title = extractTitle(dom) or tab.url
     tabs.setTitle(tab, title)
 
+    -- Персистентная история посещений (если хранилище доступно).
+    if bmstore and user and user.home and tab.url and tab.url ~= "" then
+        pcall(bmstore.addHistory, user.home, tab.url, title)
+    end
+
     appState.focus = "page"
 
     if tab.url and tab.url ~= "" then
@@ -376,6 +439,130 @@ local function syncAddrFromTab()
     local tab = currentTab()
     appState.urlInput = tab.url or ""
     appState.cursorPos = #appState.urlInput + 1
+end
+
+-- ---------------------------------------------------------------
+-- Закладки и специальные страницы
+-- ---------------------------------------------------------------
+
+local function htmlEscape(s)
+    s = tostring(s or "")
+    s = s:gsub("&", "&amp;")
+    s = s:gsub("<", "&lt;")
+    s = s:gsub(">", "&gt;")
+    s = s:gsub("\"", "&quot;")
+    s = s:gsub("'", "&#39;")
+    return s
+end
+
+-- Отрендерить произвольный HTML во внутреннюю вкладку (спец-страница).
+local function openSpecialPage(content, pseudoUrl)
+    local tab = currentTab()
+    tab.url = pseudoUrl or "znatok://internal"
+    local okP, dom = pcall(html.parse, content)
+    if not okP or not dom then
+        dom = { type = "document", children = {
+            { type = "text", text = content or "" }
+        }}
+    end
+    tab.dom = dom
+
+    local g = layoutGeom()
+    local contentW = g.w
+    local boxes, total
+    if layout and layout.compute then
+        local okL, lres = pcall(layout.compute, dom, contentW, {})
+        if okL and lres then
+            boxes = lres.boxes or lres
+            total = lres.totalHeight or 0
+        end
+    end
+    if not boxes then
+        boxes = {}
+        total = 0
+    end
+    tab.boxes = boxes
+    tab.totalHeight = total or #boxes
+    tab.scrollY = 0
+    tab.status = "внутренняя страница"
+
+    local title = extractTitle(dom) or "Закладки"
+    tabs.setTitle(tab, title)
+
+    appState.urlInput = tab.url
+    appState.cursorPos = #appState.urlInput + 1
+    appState.focus = "page"
+end
+
+local function renderBookmarksPage()
+    local parts = { "<html><head><title>Закладки</title></head><body>" }
+    parts[#parts + 1] = "<h1>Закладки</h1>"
+
+    local bm = {}
+    if bmstore and user and user.home then
+        local ok, res = pcall(bmstore.loadBookmarks, user.home)
+        if ok and type(res) == "table" then bm = res end
+    end
+    if #bm == 0 then
+        parts[#parts + 1] = "<p>Закладок нет.</p>"
+    else
+        for _, b in ipairs(bm) do
+            local u = htmlEscape(b.url or "")
+            local t = htmlEscape(b.title or b.url or "")
+            parts[#parts + 1] = '<p><a href="' .. u .. '">' .. t .. "</a></p>"
+        end
+    end
+
+    parts[#parts + 1] = "<h2>История</h2>"
+    local hist = {}
+    if bmstore and user and user.home then
+        local ok, res = pcall(bmstore.loadHistory, user.home)
+        if ok and type(res) == "table" then hist = res end
+    end
+    if #hist == 0 then
+        parts[#parts + 1] = "<p>История пуста.</p>"
+    else
+        local lim = math.min(50, #hist)
+        for i = 1, lim do
+            local h = hist[i]
+            local u = htmlEscape(h.url or "")
+            local t = htmlEscape(h.title or h.url or "")
+            parts[#parts + 1] = '<p><a href="' .. u .. '">' .. t .. "</a></p>"
+        end
+    end
+
+    parts[#parts + 1] = "</body></html>"
+    return table.concat(parts)
+end
+
+local function toggleBookmark()
+    local tab = currentTab()
+    if not (bmstore and user and user.home) then
+        tab.status = "закладки недоступны"
+        return
+    end
+    local u = tab.url
+    if not u or u == "" or u:sub(1, 9) == "znatok://" then
+        tab.status = "нельзя добавить в закладки"
+        return
+    end
+    local ok, isBm = pcall(bmstore.isBookmarked, user.home, u)
+    if ok and isBm then
+        pcall(bmstore.removeBookmark, user.home, u)
+        tab.status = "Закладка удалена"
+    else
+        local title = tab.title or u
+        pcall(bmstore.addBookmark, user.home, u, title)
+        tab.status = "Закладка добавлена"
+    end
+end
+
+local function openBookmarksPage()
+    if not html or not layout then
+        currentTab().status = "внутренние страницы недоступны"
+        return
+    end
+    openSpecialPage(renderBookmarksPage(), "znatok://bookmarks")
 end
 
 -- ---------------------------------------------------------------
@@ -468,6 +655,12 @@ local function handleKey(k)
                 tabs.next(tabState)
             end
             syncAddrFromTab()
+            return
+        elseif k == keys.d then
+            toggleBookmark()
+            return
+        elseif k == keys.h then
+            openBookmarksPage()
             return
         end
     end
