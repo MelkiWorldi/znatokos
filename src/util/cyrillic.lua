@@ -106,6 +106,35 @@ function M.encode(s)
     return table.concat(out)
 end
 
+-- Специальный encode для term.blit: кодирует text и параллельно
+-- сжимает fg/bg так, чтобы они остались той же длины что и закодированный text.
+-- Возвращает 3 строки одинаковой длины: text, fg, bg.
+function M.encodeBlit(text, fg, bg)
+    if type(text) ~= "string" then return text, fg, bg end
+    local hasHi = false
+    for i = 1, #text do
+        if text:byte(i) >= 0x80 then hasHi = true; break end
+    end
+    if not hasHi then return text, fg, bg end
+
+    local tOut, fOut, bOut = {}, {}, {}
+    local i = 1
+    while i <= #text do
+        -- "Начальный байт" UTF-8-последовательности = позиция в исходнике,
+        -- откуда берём fg/bg. Затем decodeUtf8 проглатывает все байты char'а.
+        local fChar = fg and fg:sub(i, i) or ""
+        local bChar = bg and bg:sub(i, i) or ""
+        local cp, ni = decodeUtf8(text, i)
+        if cp then
+            tOut[#tOut + 1] = string.char(codepointToCP1251(cp))
+            fOut[#fOut + 1] = fChar
+            bOut[#bOut + 1] = bChar
+        end
+        i = ni
+    end
+    return table.concat(tOut), table.concat(fOut), table.concat(bOut)
+end
+
 -- Устанавливает глобальные перехваты на вывод.
 -- После вызова весь term.write / term.blit / print / io.write
 -- перекодируют UTF-8 кириллицу в CP1251.
@@ -137,9 +166,14 @@ function M.installHooks()
     if term.blit then
         local origBlit = term.blit
         term.blit = function(text, fg, bg)
-            local s = safeWrap(text)
+            local s, f, b
+            if depth > 0 then
+                s, f, b = tostring(text), fg, bg
+            else
+                s, f, b = M.encodeBlit(tostring(text), fg, bg)
+            end
             depth = depth + 1
-            local ok, err = pcall(origBlit, s, fg, bg)
+            local ok, err = pcall(origBlit, s, f, b)
             depth = depth - 1
             if not ok then error(err, 0) end
         end
@@ -175,9 +209,14 @@ function M.installHooks()
             if w.blit then
                 local wBlit = w.blit
                 w.blit = function(text, fg, bg)
-                    local s = safeWrap(text)
+                    local s, f, b
+                    if depth > 0 then
+                        s, f, b = tostring(text), fg, bg
+                    else
+                        s, f, b = M.encodeBlit(tostring(text), fg, bg)
+                    end
                     depth = depth + 1
-                    local ok, err = pcall(wBlit, s, fg, bg)
+                    local ok, err = pcall(wBlit, s, f, b)
                     depth = depth - 1
                     if not ok then error(err, 0) end
                 end
