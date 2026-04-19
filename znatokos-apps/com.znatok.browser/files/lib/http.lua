@@ -5,9 +5,16 @@
 --
 -- Экспорты: get, post, head, newSession (для изолированного cookie jar).
 
-local url = require("url")
+-- В sandbox'е require запрещён, поэтому url-модуль либо ставится
+-- извне через M._setUrlLib, либо берём из package.loaded (если тесты).
+local url
+local ok_req, required = pcall(require, "url")
+if ok_req then url = required end
 
 local M = {}
+
+-- Инжектор url-модуля из main.lua (когда require недоступен).
+function M._setUrlLib(mod) url = mod end
 
 -- Максимум редиректов по умолчанию
 local DEFAULT_MAX_REDIRECTS = 5

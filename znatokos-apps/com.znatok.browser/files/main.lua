@@ -17,8 +17,10 @@ local function loadLib(rel)
     return mod
 end
 
-local http   = loadLib("http.lua")
 local urlLib = loadLib("url.lua")
+local http   = loadLib("http.lua")
+-- http.lua нужен url-модуль, но require() запрещён в sandbox → инжектим.
+if http and http._setUrlLib then http._setUrlLib(urlLib) end
 local html   = loadLib("html.lua")
 local layout = loadLib("layout.lua")
 local render = loadLib("render.lua")
