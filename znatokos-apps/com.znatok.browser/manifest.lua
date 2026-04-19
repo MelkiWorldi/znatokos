@@ -1,7 +1,7 @@
 return {
     id = "com.znatok.browser",
     name = "Браузер",
-    version = "1.2.0",
+    version = "1.3.0",
     author = "znatok",
     description = "Web-браузер: HTML+CSS, вкладки, закладки, поиск, масштаб, звук (<audio>)",
     icon = { color = colors.lightBlue, glyph = "W" },

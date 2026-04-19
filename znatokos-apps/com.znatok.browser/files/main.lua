@@ -181,6 +181,18 @@ end
 --   statusY = h   — статус
 local function layoutGeom()
     local w, h = term.getSize()
+    -- Справа в строке адреса: [GO] [-] NNN% [+] [FS]
+    --                        4+1 + 3+1 + 4+1 + 3+1 + 4  = ~22
+    local fsBtnX2   = w
+    local fsBtnX1   = w - 3             -- "[FS]"
+    local zmPlusX2  = fsBtnX1 - 2       -- пробел
+    local zmPlusX1  = zmPlusX2 - 2      -- "[+]"
+    local zmPctX2   = zmPlusX1 - 1
+    local zmPctX1   = zmPctX2 - 3       -- " 100% " (6 симв включая пробелы)
+    local zmMinusX2 = zmPctX1 - 1
+    local zmMinusX1 = zmMinusX2 - 2     -- "[-]"
+    local goBtnX2   = zmMinusX1 - 2
+    local goBtnX1   = goBtnX2 - 3       -- "[GO]"
     return {
         w = w, h = h,
         tabBarY   = 1,
@@ -190,9 +202,12 @@ local function layoutGeom()
         contentY2 = h - 1,
         statusY   = h,
         urlFieldX1 = 6,
-        urlFieldX2 = w - 6,
-        goBtnX1  = w - 4,
-        goBtnX2  = w - 1,
+        urlFieldX2 = goBtnX1 - 2,
+        goBtnX1    = goBtnX1,    goBtnX2    = goBtnX2,
+        zmMinusX1  = zmMinusX1,  zmMinusX2  = zmMinusX2,
+        zmPctX1    = zmPctX1,    zmPctX2    = zmPctX2,
+        zmPlusX1   = zmPlusX1,   zmPlusX2   = zmPlusX2,
+        fsBtnX1    = fsBtnX1,    fsBtnX2    = fsBtnX2,
     }
 end
 
@@ -240,14 +255,41 @@ local function drawChrome(g)
     shown = shown .. string.rep(" ", math.max(0, fieldW - #shown))
     term.write(shown)
 
-    term.setCursorPos(g.goBtnX1 - 1, g.addrY)
-    term.setBackgroundColor(THEME.chrome_bg)
-    term.setTextColor(THEME.chrome_fg)
-    term.write(" ")
+    -- [GO]
     term.setBackgroundColor(THEME.accent)
     term.setTextColor(colors.white)
-    term.setCursorPos(g.goBtnX1, g.addrY)
-    term.write("[GO]")
+    term.setCursorPos(g.goBtnX1, g.addrY); term.write("[GO]")
+
+    -- [-]
+    term.setBackgroundColor(THEME.chrome_bg); term.setTextColor(THEME.chrome_fg)
+    term.setCursorPos(g.zmMinusX1 - 1, g.addrY); term.write(" ")  -- разделитель
+    term.setBackgroundColor(colors.gray); term.setTextColor(colors.white)
+    term.setCursorPos(g.zmMinusX1, g.addrY); term.write("[-]")
+
+    -- NNN%
+    term.setBackgroundColor(THEME.chrome_bg); term.setTextColor(THEME.chrome_fg)
+    local pct = string.format("%3d%%", math.floor((appState.pageZoom or 1.0) * 100 + 0.5))
+    term.setCursorPos(g.zmPctX1, g.addrY); term.write(pct)
+
+    -- [+]
+    term.setBackgroundColor(colors.gray); term.setTextColor(colors.white)
+    term.setCursorPos(g.zmPlusX1, g.addrY); term.write("[+]")
+
+    -- [FS] — полноэкранный режим. Активный — подсветка accent.
+    if appState.fullscreen then
+        term.setBackgroundColor(THEME.accent); term.setTextColor(colors.white)
+    else
+        term.setBackgroundColor(colors.gray); term.setTextColor(colors.white)
+    end
+    term.setCursorPos(g.fsBtnX1 - 1, g.addrY)
+    term.setBackgroundColor(THEME.chrome_bg); term.setTextColor(THEME.chrome_fg)
+    term.write(" ")
+    if appState.fullscreen then
+        term.setBackgroundColor(THEME.accent); term.setTextColor(colors.white)
+    else
+        term.setBackgroundColor(colors.gray); term.setTextColor(colors.white)
+    end
+    term.setCursorPos(g.fsBtnX1, g.addrY); term.write("[FS]")
 
     term.setBackgroundColor(THEME.bg)
     term.setTextColor(colors.gray)
@@ -840,7 +882,21 @@ local function handleKey(k)
         end
     end
 
-    -- F11 — полноэкранный режим (максимизация окна)
+    -- В режиме page (не ввод URL) — простые + / - / 0 для масштаба без Ctrl.
+    if appState.focus == "page" then
+        if k == keys.equals or k == keys.numPadAdd then
+            appState.pageZoom = math.min(2.0, (appState.pageZoom or 1.0) + 0.1)
+            reflowCurrent(); return
+        elseif k == keys.minus or k == keys.numPadSubtract then
+            appState.pageZoom = math.max(0.5, (appState.pageZoom or 1.0) - 0.1)
+            reflowCurrent(); return
+        elseif k == keys.zero or k == keys.numPad0 then
+            appState.pageZoom = 1.0
+            reflowCurrent(); return
+        end
+    end
+
+    -- F11 — полноэкранный режим (если клавиша доступна; иначе используй кнопку [FS])
     if k == keys.f11 then
         toggleFullscreen()
         return
@@ -942,7 +998,19 @@ local function handleMouseClick(btn, x, y)
     end
 
     if y == g.addrY then
-        if x >= g.goBtnX1 and x <= g.goBtnX2 + 1 then
+        if x >= g.fsBtnX1 and x <= g.fsBtnX2 then
+            toggleFullscreen()
+        elseif x >= g.zmPlusX1 and x <= g.zmPlusX2 then
+            appState.pageZoom = math.min(2.0, (appState.pageZoom or 1.0) + 0.1)
+            reflowCurrent()
+        elseif x >= g.zmMinusX1 and x <= g.zmMinusX2 then
+            appState.pageZoom = math.max(0.5, (appState.pageZoom or 1.0) - 0.1)
+            reflowCurrent()
+        elseif x >= g.zmPctX1 and x <= g.zmPctX2 then
+            -- Клик по индикатору % — сброс до 100%
+            appState.pageZoom = 1.0
+            reflowCurrent()
+        elseif x >= g.goBtnX1 and x <= g.goBtnX2 + 1 then
             navigate(appState.urlInput)
         elseif x >= g.urlFieldX1 and x <= g.urlFieldX2 then
             appState.focus = "address"
