@@ -259,6 +259,57 @@ end
 function M.endDrag() drag = nil end
 function M.isDragging() return drag ~= nil end
 
+-- Программное изменение размера окна. Возвращает фактические new w,h
+-- (с клампом под размер родителя минус taskbar). Используется для F11-фуллскрин.
+function M.setSize(id, newW, newH, newX, newY)
+    local w = windows[id]; if not w then return nil end
+    local pw, ph = parentTerm.getSize()
+    newW = math.max(10, math.min(newW or w.w, pw))
+    newH = math.max(5,  math.min(newH or w.h, ph - 1))
+    newX = math.max(1, math.min(newX or w.x, pw - newW + 1))
+    newY = math.max(1, math.min(newY or w.y, ph - 1 - newH + 1))
+    w.x, w.y, w.w, w.h = newX, newY, newW, newH
+    if w.chrome then
+        w.chrome.reposition(newX, newY, newW, newH)
+        w.win.reposition(2, 2, newW - 2, newH - 2)
+    else
+        w.win.reposition(newX, newY, newW, newH)
+    end
+    requestFullRedraw()
+    -- уведомляем само приложение о новом размере контента
+    local contentW = w.chrome and (newW - 2) or newW
+    local contentH = w.chrome and (newH - 2) or newH
+    os.queueEvent("term_resize")
+    os.queueEvent("znatokos:window_resized", id, contentW, contentH)
+    return contentW, contentH
+end
+
+-- Максимизировать на всё доступное пространство родителя (кроме taskbar).
+function M.maximize(id)
+    local w = windows[id]; if not w then return nil end
+    local pw, ph = parentTerm.getSize()
+    -- Запомним прошлый размер чтобы можно было restore.
+    w._prevRect = w._prevRect or { x = w.x, y = w.y, w = w.w, h = w.h }
+    return M.setSize(id, pw, ph - 1, 1, 1)
+end
+
+-- Вернуть размер до maximize.
+function M.restore(id)
+    local w = windows[id]; if not w then return nil end
+    if not w._prevRect then return w.w, w.h end
+    local r = w._prevRect
+    w._prevRect = nil
+    return M.setSize(id, r.w, r.h, r.x, r.y)
+end
+
+-- Геттер размера content-area (без chrome).
+function M.getContentSize(id)
+    local w = windows[id]; if not w then return nil end
+    local cw = w.chrome and (w.w - 2) or w.w
+    local ch = w.chrome and (w.h - 2) or w.h
+    return cw, ch
+end
+
 --------------------------------------------------------------
 -- reflow после ресайза родительского терминала
 --------------------------------------------------------------

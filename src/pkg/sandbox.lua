@@ -476,11 +476,46 @@ function M.build(opts)
     end
     env.kernel = kernelTbl
 
+    -- Безопасное API контроля собственного окна: maximize/restore/setSize/getSize.
+    -- Без доступа к чужим окнам или к их содержимому — только к своему id.
+    local appWindowApi = nil
+    if opts.window and opts.window.id then
+        local winId = opts.window.id
+        appWindowApi = {
+            id = winId,
+            maximize = function()
+                local ok, wm = pcall(znatokos.use, "kernel/window")
+                if not ok or not wm.maximize then return nil, "wm not available" end
+                return wm.maximize(winId)
+            end,
+            restore = function()
+                local ok, wm = pcall(znatokos.use, "kernel/window")
+                if not ok or not wm.restore then return nil, "wm not available" end
+                return wm.restore(winId)
+            end,
+            setSize = function(w, h)
+                local ok, wm = pcall(znatokos.use, "kernel/window")
+                if not ok or not wm.setSize then return nil, "wm not available" end
+                return wm.setSize(winId, w, h)
+            end,
+            getSize = function()
+                local ok, wm = pcall(znatokos.use, "kernel/window")
+                if not ok or not wm.getContentSize then return nil, "wm not available" end
+                return wm.getContentSize(winId)
+            end,
+        }
+    end
+
     -- znatokos-объект для app
     env.znatokos = {
         VERSION = (_G.znatokos and _G.znatokos.VERSION) or "0.3.0",
         use     = safeUse,
-        app     = { id = appId, dir = appDir, user = user },
+        app     = {
+            id     = appId,
+            dir    = appDir,
+            user   = user,
+            window = appWindowApi,
+        },
     }
 
     -- load/loadfile/loadstring: ограничены appDir
