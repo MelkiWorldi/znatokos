@@ -16,6 +16,31 @@ local M = {}
 -- Инжектор url-модуля из main.lua (когда require недоступен).
 function M._setUrlLib(mod) url = mod end
 
+-- Проксирование запросов через внешний сервер (обход блокировок).
+-- Если proxyBase задан, все URL кроме самого прокси идут через /fetch?url=...
+-- Обычно = "http://72.56.109.107:8088" или с location /proxy — без завершающего слеша.
+local PROXY_BASE = nil
+function M._setProxy(base) PROXY_BASE = base end
+function M._getProxy() return PROXY_BASE end
+
+-- Оборачивает URL в прокси-запрос. Не трогает если URL уже прокси или сама прокси-база.
+local function wrapProxy(u)
+    if not PROXY_BASE or not u or u == "" then return u end
+    if u:find(PROXY_BASE, 1, true) then return u end
+    -- Сам не трогаем data:/file:
+    if u:sub(1, 5) == "data:" or u:sub(1, 5) == "file:" then return u end
+    -- Кодируем
+    local encoded
+    if url and url.encode then
+        encoded = url.encode(u)
+    else
+        encoded = (u:gsub("[^%w%-_.~]", function(c)
+            return string.format("%%%02X", string.byte(c))
+        end))
+    end
+    return PROXY_BASE .. "/fetch?url=" .. encoded
+end
+
 -- Максимум редиректов по умолчанию
 local DEFAULT_MAX_REDIRECTS = 5
 local DEFAULT_TIMEOUT = 15 -- секунд
@@ -263,7 +288,7 @@ end
 
 -- Публичный GET.
 function M.get(requestUrl, opts)
-    return request("GET", requestUrl, nil, opts)
+    return request("GET", wrapProxy(requestUrl), nil, opts)
 end
 
 -- Публичный POST. body может быть строкой или таблицей (form-urlencoded).
@@ -300,7 +325,7 @@ function M.post(requestUrl, body, opts)
     for k, v in pairs(opts) do newOpts[k] = v end
     newOpts.headers = headers
 
-    return request("POST", requestUrl, sendBody, newOpts)
+    return request("POST", wrapProxy(requestUrl), sendBody, newOpts)
 end
 
 -- HEAD — CC не умеет нативно, делаем GET и отбрасываем тело.

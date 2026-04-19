@@ -45,9 +45,12 @@ do
 end
 local audioMuted = false  -- Ctrl+M toggle
 
--- Адрес прокси-сервиса: PNG/JPG/GIF/WebP → NFP с дизерингом.
--- Если пустое/nil — оригинальные URL остаются как есть (покажется плейсхолдер).
-local IMG_PROXY_BASE = "http://85.239.37.114/proxy/img"
+-- Адрес прокси-серверов. Оба эндпоинта живут на одном сервере,
+-- вне РФ — чтобы обходить блокировки (многие сайты блокированы на ru-серверах).
+local HTTP_PROXY_BASE = "http://72.56.109.107:8088"           -- general fetch
+local IMG_PROXY_BASE  = "http://72.56.109.107:8088/img"       -- PNG/JPG → NFP
+-- Включаем прокси HTTP в http.lua (все get/post оборачиваются).
+if http and http._setProxy then http._setProxy(HTTP_PROXY_BASE) end
 local IMG_PROXY_ENABLED = true   -- Ctrl+I toggle
 local IMG_PROXY_DEFAULT_W = 40
 local IMG_PROXY_DEFAULT_H = 16
@@ -55,7 +58,9 @@ local IMG_PROXY_DEFAULT_H = 16
 -- Пропускать ли src через прокси: да для http(s) не-NFP, нет для data:/file:/ и уже-NFP.
 local function needsProxy(src)
     if type(src) ~= "string" or src == "" then return false end
-    if src:match("/proxy/img") then return false end  -- уже прокси
+    if src:match("/proxy/img") or src:match(":8088/img") or src:match("/img%?url=") then
+        return false  -- уже прокси
+    end
     if src:lower():match("%.nfp$") or src:lower():match("%.nft$") then return false end
     if src:sub(1, 5) == "data:" or src:sub(1, 5) == "file:" then return false end
     if not (src:sub(1, 7) == "http://" or src:sub(1, 8) == "https://") then return false end
@@ -97,21 +102,32 @@ end
 
 -- Обход DOM: каждому <img src="..."> резолвим до абсолюта и переписываем на прокси.
 -- Вызывается сразу после html.parse, до layout.compute.
+local _lastImgStats = { total = 0, rewritten = 0, svg = 0, skipped = 0 }
 local function rewriteImageSources(dom, baseUrl)
-    if not IMG_PROXY_ENABLED or not IMG_PROXY_BASE or IMG_PROXY_BASE == "" then return end
+    _lastImgStats = { total = 0, rewritten = 0, svg = 0, skipped = 0 }
+    if not IMG_PROXY_ENABLED or not IMG_PROXY_BASE or IMG_PROXY_BASE == "" then
+        _lastImgStats.skipped = -1
+        return
+    end
     if not (html and html.findAll) then return end
     local imgs = html.findAll(dom, "img") or {}
+    _lastImgStats.total = #imgs
     for _, node in ipairs(imgs) do
         if node.attrs then
             local originalSrc = node.attrs.src
             local resolved = resolveImgUrl(originalSrc, baseUrl)
             -- SVG пропускаем (proxy/PIL его не открывает без cairo).
             local isSvg = resolved and resolved:lower():match("%.svg[%?#]?") ~= nil
-            if needsProxy(resolved) and not isSvg then
+            if isSvg then
+                _lastImgStats.svg = _lastImgStats.svg + 1
+            elseif needsProxy(resolved) then
                 local w = node.attrs.width
                 local h = node.attrs.height
                 node.attrs._originalSrc = originalSrc
                 node.attrs.src = buildProxyUrl(resolved, w, h)
+                _lastImgStats.rewritten = _lastImgStats.rewritten + 1
+            else
+                _lastImgStats.skipped = _lastImgStats.skipped + 1
             end
         end
     end
@@ -607,8 +623,8 @@ local function navigate(u, opts)
     tab.boxes       = boxes
     tab.totalHeight = total or #boxes
     tab.scrollY     = 0
-    tab.status      = "ok  (" .. #boxes .. " блоков, " ..
-                      tostring(tab.totalHeight) .. " строк)"
+    tab.status      = string.format("ok (%d блоков, img: %d/%d, svg: %d)",
+        #boxes, _lastImgStats.rewritten, _lastImgStats.total, _lastImgStats.svg)
 
     local title = extractTitle(dom) or tab.url
     tabs.setTitle(tab, title)
@@ -637,6 +653,7 @@ local function navigate(u, opts)
     -- чтобы render.draw мог отрисовать реальный пиксель-контент. Сбои — тихие.
     if imageLib and http then
         local tab = currentTab()
+        local loaded, failed, lastErr = 0, 0, nil
         for _, b in ipairs(tab.boxes or {}) do
             if b.type == "image" and b.src and not b._imageData then
                 local absUrl = b.src
@@ -645,8 +662,21 @@ local function navigate(u, opts)
                     if okU and u then absUrl = u end
                 end
                 local okI, img = pcall(imageLib.fetch, absUrl, http)
-                if okI and img then b._imageData = img end
+                if okI and img then
+                    b._imageData = img
+                    loaded = loaded + 1
+                else
+                    failed = failed + 1
+                    if not okI then lastErr = tostring(img)
+                    else lastErr = "decode failed" end
+                end
             end
+        end
+        -- Обновляем статус — видно сколько картинок ожили.
+        if _lastImgStats.rewritten > 0 or failed > 0 then
+            tab.status = string.format("ok (img: %d/%d загружены%s)",
+                loaded, _lastImgStats.rewritten,
+                failed > 0 and (", fail: " .. failed .. " — " .. (lastErr or "?")) or "")
         end
     end
 end

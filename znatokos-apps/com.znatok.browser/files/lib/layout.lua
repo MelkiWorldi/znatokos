@@ -402,7 +402,8 @@ local function emitImg(ctx, node)
     --  - содержит hint data-nfp="1"
     local isRenderable = src and (
         src:match("%.nfp$") or src:match("%.nft$")
-        or src:match("/proxy/img") or (attrs["data-nfp"] == "1")
+        or src:match("/proxy/img") or src:match(":8088/img") or src:match("/img%?url=")
+        or (attrs["data-nfp"] == "1")
     )
     if isRenderable then
         -- Резервируем место под картинку. Реальные размеры выяснятся после http.get.
