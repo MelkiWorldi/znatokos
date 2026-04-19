@@ -41,15 +41,22 @@ end
 local function detectFormat(url, body)
     if url:lower():match("%.nfp$") then return "nfp" end
     if url:lower():match("%.nft$") then return "nft" end
-    -- Fallback: если только hex-цифры и пробелы — NFP
-    if body:sub(1, 100):match("^[%x ]*\n") then return "nfp" end
+    -- Все варианты нашего прокси: /proxy/img на 85, :8088/img или /img?url= на 72.
+    if url:match("/proxy/img") or url:match(":8088/img")
+       or url:match("/img%?url=") or url:match("/fetch%?url=") then
+        return "nfp"
+    end
+    -- Fallback: sniff — если первые 50 не-пробельных символов все hex.
+    local head = body:sub(1, 200):gsub("%s", "")
+    if #head > 0 and head:sub(1, 50):match("^[%x]+$") then return "nfp" end
     return nil
 end
 
 -- Загрузка по HTTP
 function M.fetch(url, httpLib)
     if not httpLib then return nil, "http unavailable" end
-    local resp, err = httpLib.get(url)
+    -- Прокси может долго квантизировать большие картинки — даём 30 сек.
+    local resp, err = httpLib.get(url, { timeout = 30 })
     if not resp or not resp.body then return nil, err or "fetch failed" end
     local fmt = detectFormat(url, resp.body)
     if not fmt then return nil, "unknown image format" end
