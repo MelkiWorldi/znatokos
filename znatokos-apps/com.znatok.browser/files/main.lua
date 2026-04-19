@@ -562,7 +562,7 @@ local function navigate(u, opts)
     tab.dom = dom
 
     -- Автоматически переписываем src у всех <img> на прокси (PNG/JPG/WebP → NFP).
-    pcall(rewriteImageSources, dom, (tab and tab.url) or u)
+    pcall(rewriteImageSources, dom, u or (tab and tab.url))
 
     local g = layoutGeom()
     local contentW = math.max(20, math.floor(g.w * (appState.pageZoom or 1.0)))
@@ -703,7 +703,7 @@ local function openSpecialPage(content, pseudoUrl)
     tab.dom = dom
 
     -- Автоматически переписываем src у всех <img> на прокси (PNG/JPG/WebP → NFP).
-    pcall(rewriteImageSources, dom, (tab and tab.url) or u)
+    pcall(rewriteImageSources, dom, u or (tab and tab.url))
 
     local g = layoutGeom()
     local contentW = math.max(20, math.floor(g.w * (appState.pageZoom or 1.0)))
