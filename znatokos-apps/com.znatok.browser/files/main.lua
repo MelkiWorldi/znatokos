@@ -45,6 +45,55 @@ do
 end
 local audioMuted = false  -- Ctrl+M toggle
 
+-- Адрес прокси-сервиса: PNG/JPG/GIF/WebP → NFP с дизерингом.
+-- Если пустое/nil — оригинальные URL остаются как есть (покажется плейсхолдер).
+local IMG_PROXY_BASE = "http://85.239.37.114/proxy/img"
+local IMG_PROXY_ENABLED = true   -- Ctrl+I toggle
+local IMG_PROXY_DEFAULT_W = 40
+local IMG_PROXY_DEFAULT_H = 16
+
+-- Пропускать ли src через прокси: да для http(s) не-NFP, нет для data:/file:/ и уже-NFP.
+local function needsProxy(src)
+    if type(src) ~= "string" or src == "" then return false end
+    if src:match("/proxy/img") then return false end  -- уже прокси
+    if src:lower():match("%.nfp$") or src:lower():match("%.nft$") then return false end
+    if src:sub(1, 5) == "data:" or src:sub(1, 5) == "file:" then return false end
+    if not (src:sub(1, 7) == "http://" or src:sub(1, 8) == "https://") then return false end
+    return true
+end
+
+-- Строит прокси-URL для произвольной src-URL и размеров из атрибутов.
+local function buildProxyUrl(src, w, h)
+    local encode = (urlLib and urlLib.encode) or function(s)
+        return (s:gsub("[^%w%-_.~]", function(c)
+            return string.format("%%%02X", string.byte(c))
+        end))
+    end
+    local ew = tonumber(w) or IMG_PROXY_DEFAULT_W
+    local eh = tonumber(h) or IMG_PROXY_DEFAULT_H
+    return IMG_PROXY_BASE .. "?url=" .. encode(src)
+        .. "&w=" .. tostring(ew) .. "&h=" .. tostring(eh)
+end
+
+-- Обход DOM: каждому <img src="http://..."> переписываем src на прокси.
+-- Вызывается сразу после html.parse, до layout.compute.
+local function rewriteImageSources(dom)
+    if not IMG_PROXY_ENABLED or not IMG_PROXY_BASE or IMG_PROXY_BASE == "" then return end
+    if not (html and html.findAll) then return end
+    local imgs = html.findAll(dom, "img") or {}
+    for _, node in ipairs(imgs) do
+        if node.attrs then
+            local src = node.attrs.src
+            if needsProxy(src) then
+                local w = node.attrs.width
+                local h = node.attrs.height
+                node.attrs._originalSrc = src
+                node.attrs.src = buildProxyUrl(src, w, h)
+            end
+        end
+    end
+end
+
 -- Универсальный плейер для <audio src=...> / onclick.
 -- Поддерживаемые схемы:
 --   sound:<event>[?pitch=N&vol=N]   — MC sound event (block.note_block.bell)
@@ -489,6 +538,9 @@ local function navigate(u, opts)
     end
     tab.dom = dom
 
+    -- Автоматически переписываем src у всех <img> на прокси (PNG/JPG/WebP → NFP).
+    pcall(rewriteImageSources, dom)
+
     local g = layoutGeom()
     local contentW = math.max(20, math.floor(g.w * (appState.pageZoom or 1.0)))
     local boxes, total
@@ -626,6 +678,9 @@ local function openSpecialPage(content, pseudoUrl)
         }}
     end
     tab.dom = dom
+
+    -- Автоматически переписываем src у всех <img> на прокси (PNG/JPG/WebP → NFP).
+    pcall(rewriteImageSources, dom)
 
     local g = layoutGeom()
     local contentW = math.max(20, math.floor(g.w * (appState.pageZoom or 1.0)))
@@ -899,6 +954,11 @@ local function handleKey(k)
             audioMuted = not audioMuted
             if audioMuted then stopAudio() end
             currentTab().status = audioMuted and "звук: выкл" or "звук: вкл"
+            return
+        elseif k == keys.i then
+            -- Ctrl+I: вкл/выкл авто-прокси картинок (PNG/JPG → NFP).
+            IMG_PROXY_ENABLED = not IMG_PROXY_ENABLED
+            currentTab().status = "картинки: " .. (IMG_PROXY_ENABLED and "прокси вкл" or "прокси выкл — перезагрузи страницу")
             return
         end
     end
