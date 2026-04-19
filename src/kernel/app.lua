@@ -99,7 +99,7 @@ function M.run(appId, user)
     if type(appId) ~= "string" or #appId == 0 then
         return nil, "appId не задан"
     end
-    local appDir = paths.APPS .. "/" .. appId
+    local appDir = paths.APPS_INSTALLED .. "/" .. appId
     local manifestPath = appDir .. "/manifest.lua"
 
     if not fs.exists(manifestPath) then
@@ -237,11 +237,11 @@ end
 --------------------------------------------------------------
 function M.listInstalled()
     local out = {}
-    if not fs.exists(paths.APPS) or not fs.isDir(paths.APPS) then return out end
-    local ok, entries = pcall(fs.list, paths.APPS)
+    if not fs.exists(paths.APPS_INSTALLED) or not fs.isDir(paths.APPS_INSTALLED) then return out end
+    local ok, entries = pcall(fs.list, paths.APPS_INSTALLED)
     if not ok or type(entries) ~= "table" then return out end
     for _, name in ipairs(entries) do
-        local dir = paths.APPS .. "/" .. name
+        local dir = paths.APPS_INSTALLED .. "/" .. name
         if fs.isDir(dir) then
             local mPath = dir .. "/manifest.lua"
             if fs.exists(mPath) then
@@ -265,7 +265,7 @@ end
 
 function M.isInstalled(appId)
     if type(appId) ~= "string" or #appId == 0 then return false end
-    local mPath = paths.APPS .. "/" .. appId .. "/manifest.lua"
+    local mPath = paths.APPS_INSTALLED .. "/" .. appId .. "/manifest.lua"
     if not fs.exists(mPath) then return false end
     local m = manifest.load(mPath)
     if not m then return false end
