@@ -214,7 +214,19 @@ function M.fetchManifest(appId)
     local url = joinUrl(cfg.url, "apps", appId, "manifest.lua")
     local body, err = httpGet(url)
     if not body then return nil, err end
-    local fn, lerr = load(body, "manifest:" .. appId, "bt", {})
+    -- Даём манифесту минимальное безопасное окружение: colors нужен для icon.color.
+    local manifestEnv = {
+        colors   = colors,
+        colours  = colours or colors,
+        math     = math,
+        string   = string,
+        table    = table,
+        tostring = tostring,
+        tonumber = tonumber,
+        ipairs   = ipairs,
+        pairs    = pairs,
+    }
+    local fn, lerr = load(body, "manifest:" .. appId, "bt", manifestEnv)
     if not fn then
         return nil, "ошибка загрузки manifest: " .. tostring(lerr)
     end
