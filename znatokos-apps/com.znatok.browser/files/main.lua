@@ -75,20 +75,43 @@ local function buildProxyUrl(src, w, h)
         .. "&w=" .. tostring(ew) .. "&h=" .. tostring(eh)
 end
 
--- Обход DOM: каждому <img src="http://..."> переписываем src на прокси.
+-- Разрешает относительные URL картинок относительно base URL (текущая страница).
+local function resolveImgUrl(src, baseUrl)
+    if type(src) ~= "string" or src == "" then return src end
+    -- Уже абсолютный
+    if src:sub(1, 7) == "http://" or src:sub(1, 8) == "https://" then return src end
+    -- protocol-relative //host/path
+    if src:sub(1, 2) == "//" then
+        local scheme = baseUrl and baseUrl:match("^(https?):") or "https"
+        return scheme .. ":" .. src
+    end
+    -- data:/file: — не трогаем
+    if src:sub(1, 5) == "data:" or src:sub(1, 5) == "file:" then return src end
+    -- Относительный — резолвим через urlLib.resolve
+    if urlLib and urlLib.resolve and baseUrl then
+        local ok, abs = pcall(urlLib.resolve, baseUrl, src)
+        if ok and abs then return abs end
+    end
+    return src
+end
+
+-- Обход DOM: каждому <img src="..."> резолвим до абсолюта и переписываем на прокси.
 -- Вызывается сразу после html.parse, до layout.compute.
-local function rewriteImageSources(dom)
+local function rewriteImageSources(dom, baseUrl)
     if not IMG_PROXY_ENABLED or not IMG_PROXY_BASE or IMG_PROXY_BASE == "" then return end
     if not (html and html.findAll) then return end
     local imgs = html.findAll(dom, "img") or {}
     for _, node in ipairs(imgs) do
         if node.attrs then
-            local src = node.attrs.src
-            if needsProxy(src) then
+            local originalSrc = node.attrs.src
+            local resolved = resolveImgUrl(originalSrc, baseUrl)
+            -- SVG пропускаем (proxy/PIL его не открывает без cairo).
+            local isSvg = resolved and resolved:lower():match("%.svg[%?#]?") ~= nil
+            if needsProxy(resolved) and not isSvg then
                 local w = node.attrs.width
                 local h = node.attrs.height
-                node.attrs._originalSrc = src
-                node.attrs.src = buildProxyUrl(src, w, h)
+                node.attrs._originalSrc = originalSrc
+                node.attrs.src = buildProxyUrl(resolved, w, h)
             end
         end
     end
@@ -539,7 +562,7 @@ local function navigate(u, opts)
     tab.dom = dom
 
     -- Автоматически переписываем src у всех <img> на прокси (PNG/JPG/WebP → NFP).
-    pcall(rewriteImageSources, dom)
+    pcall(rewriteImageSources, dom, (tab and tab.url) or u)
 
     local g = layoutGeom()
     local contentW = math.max(20, math.floor(g.w * (appState.pageZoom or 1.0)))
@@ -680,7 +703,7 @@ local function openSpecialPage(content, pseudoUrl)
     tab.dom = dom
 
     -- Автоматически переписываем src у всех <img> на прокси (PNG/JPG/WebP → NFP).
-    pcall(rewriteImageSources, dom)
+    pcall(rewriteImageSources, dom, (tab and tab.url) or u)
 
     local g = layoutGeom()
     local contentW = math.max(20, math.floor(g.w * (appState.pageZoom or 1.0)))
