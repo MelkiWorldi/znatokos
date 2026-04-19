@@ -396,7 +396,15 @@ local function emitImg(ctx, node)
     local alt = attrs.alt
     -- Если src указан — порождаем box type="image" (main.lua догрузит и отрисует).
     -- Иначе — текстовый плейсхолдер.
-    if src and (src:match("%.nfp$") or src:match("%.nft$")) then
+    -- Картинка считается "рендерной" если:
+    --  - имеет расширение .nfp/.nft, ИЛИ
+    --  - проходит через наш nginx-прокси (/proxy/img?url=...)
+    --  - содержит hint data-nfp="1"
+    local isRenderable = src and (
+        src:match("%.nfp$") or src:match("%.nft$")
+        or src:match("/proxy/img") or (attrs["data-nfp"] == "1")
+    )
+    if isRenderable then
         -- Резервируем место под картинку. Реальные размеры выяснятся после http.get.
         -- Пока что задаём h=8 (средняя картинка), width=ctx.width (во всю строку).
         -- main.lua после загрузки пересчитает layout если размеры не совпали.
