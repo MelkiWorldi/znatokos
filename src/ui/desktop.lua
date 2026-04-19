@@ -338,9 +338,12 @@ function M.run(user)
                     end
                 elseif ev[1] == "znatokos:redraw" then
                     drawIcons(user); wm.redrawAll()
+                elseif ev[1] == "znatokos:apps_changed" then
+                    -- Приложение установлено/удалено — обновить список иконок.
+                    rebuildIcons(user); drawIcons(user); wm.redrawAll()
                 elseif ev[1] == "znatokos:resize" or ev[1] == "term_resize" then
                     wm.reflow()
-                    drawIcons(user); wm.redrawAll()
+                    rebuildIcons(user); drawIcons(user); wm.redrawAll()
                 end
             end
         end,

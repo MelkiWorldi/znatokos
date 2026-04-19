@@ -218,6 +218,8 @@ function M.install(appId, opts)
         end
     end
 
+    -- Событие для desktop — перестроить иконки.
+    pcall(os.queueEvent, "znatokos:apps_changed", "install", appId)
     return true
 end
 
@@ -246,6 +248,7 @@ function M.uninstall(appId)
     pcall(sandbox.permissionsClear, appId)
 
     log.info("pkg: " .. appId .. " удалён")
+    pcall(os.queueEvent, "znatokos:apps_changed", "uninstall", appId)
     return true
 end
 
