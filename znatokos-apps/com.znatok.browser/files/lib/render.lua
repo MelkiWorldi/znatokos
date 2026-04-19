@@ -9,6 +9,8 @@ local DEFAULT_THEME = {
     bg = colors.white,
     fg = colors.black,
     link = colors.blue,
+    link_fg = colors.blue,        -- alias (совместимо с themes/default.lua)
+    visited_fg = colors.purple,
     button_bg = colors.lightGray,
     button_fg = colors.black,
     input_bg = colors.lightGray,
@@ -16,6 +18,10 @@ local DEFAULT_THEME = {
     hr = colors.gray,
     status_bg = colors.gray,
     status_fg = colors.white,
+    h1_fg = colors.yellow,
+    h2_fg = colors.orange,
+    h3_fg = colors.orange,
+    error_fg = colors.red,
 }
 
 local function mergeTheme(theme)
@@ -59,23 +65,44 @@ function M.draw(win, boxes, viewport, theme)
         local bx = b.x or 1
         local by = b.y or 1
         local screenY = vy + (by - 1) - scrollY
+        local style = b.style or {}
+        -- Поддержка CSS "display:none" / атрибута hidden — пропускаем бокс.
+        if style.hidden then
+            screenY = -1 -- гарантируем что if ниже не сработает
+        end
         if screenY >= vy and screenY <= vy + vh - 1 then
-            local style = b.style or {}
-            local bg = style.bg or theme.bg
-            local fg = style.fg or theme.fg
             local bt = b.type or "text"
+            -- Предпочитаем стиль из CSS/inline (b.style.fg/bg), падаем в fallback
+            -- по типу бокса, и только потом в общий theme.bg/fg.
+            local fg = style.fg
+            local bg = style.bg
 
             if bt == "link" then
-                fg = style.fg or theme.link
+                if not fg then fg = theme.link_fg or theme.link end
             elseif bt == "button" then
-                bg = style.bg or theme.button_bg
-                fg = style.fg or theme.button_fg
+                if not bg then bg = theme.button_bg end
+                if not fg then fg = theme.button_fg end
             elseif bt == "input" then
-                bg = style.bg or theme.input_bg
-                fg = style.fg or theme.input_fg
+                if not bg then bg = theme.input_bg end
+                if not fg then fg = theme.input_fg end
             elseif bt == "hr" then
-                fg = style.fg or theme.hr
+                if not fg then fg = theme.hr end
             end
+            if not fg then fg = theme.fg end
+            if not bg then bg = theme.bg end
+
+            -- bold: терминал CC не умеет жирный. Компенсируем яркостью:
+            -- если серый/lightGray — поднимаем до white, чтобы было заметнее.
+            if style.bold then
+                if fg == colors.lightGray or fg == colors.gray then
+                    fg = colors.white
+                end
+            end
+            -- underline: в терминале нет, поэтому подсвечиваем цветом link_fg.
+            if style.underline and not style.fg then
+                fg = theme.link_fg or theme.link or fg
+            end
+            -- italic / strike — игнорируем (нет средств в CC терминале).
 
             local drawX = vx + (bx - 1)
             if drawX < vx then drawX = vx end

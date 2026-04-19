@@ -249,6 +249,9 @@ local function newCtx(width, opts)
         link = nil,
         listStack = {},
         maxY = 1,
+        -- CSS-контекст: { rulesList=..., inlineParser=function(str)->style }.
+        -- Если nil — работает хардкод styleForTag (back-compat).
+        css = opts.css,
     }
 end
 
@@ -593,7 +596,32 @@ local function walkNode(node, ctx)
     local savedIndent = ctx.indent
     local savedInPre = ctx.inPre
 
-    ctx.style = styleForTag(tag, ctx.style)
+    -- Определяем computed style для текущей ноды.
+    -- Приоритет (низкий -> высокий):
+    --   1) стиль предка (ctx.style)
+    --   2) стиль от тега (hardcoded styleForTag) — только если CSS НЕ задан,
+    --      либо если на ноде нет node.style (т.е. css.apply её не тронул)
+    --   3) node.style — результат css.apply (правила из <style> блоков)
+    --   4) inline style="..." (парсим через ctx.css.inlineParser)
+    if ctx.css then
+        -- CSS-режим: хардкод пропускаем, доверяем css.apply + inline.
+        if node.style then
+            ctx.style = mergeStyle(ctx.style, node.style)
+        else
+            -- Фолбэк на хардкод для тегов, которые css.apply не покрыл.
+            ctx.style = styleForTag(tag, ctx.style)
+        end
+        local inlineRaw = node.attrs and node.attrs.style
+        if inlineRaw and ctx.css.inlineParser then
+            local ok, inlineStyle = pcall(ctx.css.inlineParser, inlineRaw)
+            if ok and inlineStyle then
+                ctx.style = mergeStyle(ctx.style, inlineStyle)
+            end
+        end
+    else
+        -- Back-compat: нет CSS — работает как раньше.
+        ctx.style = styleForTag(tag, ctx.style)
+    end
 
     if tag == "a" then
         local href = (node.attrs and node.attrs.href) or ""

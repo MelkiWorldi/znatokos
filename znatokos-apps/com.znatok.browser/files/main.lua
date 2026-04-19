@@ -1,6 +1,6 @@
--- main.lua — скелет браузера ZnatokOS v0.3.0 (iter 7).
--- Возможности: адрес-бар, загрузка URL, рендер HTML, прокрутка.
--- НЕ реализовано пока: ссылки (клики), формы, JS, вкладки, закладки, история.
+-- main.lua — скелет браузера ZnatokOS v0.3.0 (iter 8: вкладки).
+-- Возможности: адрес-бар, загрузка URL, рендер HTML, прокрутка, вкладки.
+-- НЕ реализовано пока: закладки, редактирование полей формы.
 
 local user = (znatokos and znatokos.app and znatokos.app.user) or {}
 local appDir = (znatokos and znatokos.app and znatokos.app.dir) or ""
@@ -25,6 +25,7 @@ local render = loadLib("render.lua")
 local link   = loadLib("link.lua")
 local form   = loadLib("form.lua")
 local js     = loadLib("js.lua")
+local tabs   = loadLib("tabs.lua")
 
 -- Пробрасываем url-модуль в link.lua (у link.lua нет require в CC).
 if link and link._setUrlLib and urlLib then
@@ -35,70 +36,96 @@ end
 -- Состояние
 -- ---------------------------------------------------------------
 
-local state = {
-    urlInput    = "http://85.239.37.114/store/index.json",
-    cursorPos   = nil,       -- позиция курсора в адрес-баре
-    currentUrl  = nil,
-    dom         = nil,
-    boxes       = nil,
-    totalHeight = 0,
-    scrollY     = 0,
-    status      = "готов",
-    focus       = "address", -- "address" | "page"
-    running     = true,
-    altDown     = false,
+-- Глобальное состояние приложения (не относящееся к конкретной странице).
+local appState = {
+    urlInput  = "http://85.239.37.114/store/index.json",
+    cursorPos = nil,
+    focus     = "address", -- "address" | "page"
+    running   = true,
+    altDown   = false,
+    ctrlDown  = false,
 }
-state.cursorPos = #state.urlInput + 1
+appState.cursorPos = #appState.urlInput + 1
 
--- История навигации.
-local history = { stack = {}, idx = 0 }
+-- Состояние вкладок.
+local tabState = tabs.newState()
+tabState.tabs[1].url = appState.urlInput
 
-local function pushHistory(u)
-    -- Если мы не в конце истории (после back) — обрезаем будущее.
-    while #history.stack > history.idx do
-        table.remove(history.stack)
+local function currentTab() return tabs.current(tabState) end
+
+local function pushHistory(tab, u)
+    local h = tab.history
+    while #h.stack > h.idx do
+        table.remove(h.stack)
     end
-    history.stack[#history.stack + 1] = u
-    history.idx = #history.stack
+    h.stack[#h.stack + 1] = u
+    h.idx = #h.stack
 end
 
 local THEME = {
-    bg          = colors.white,
-    fg          = colors.black,
-    chrome_bg   = colors.lightGray,
-    chrome_fg   = colors.black,
-    accent      = colors.blue,
-    status_bg   = colors.gray,
-    status_fg   = colors.white,
-    link        = colors.blue,
+    bg              = colors.white,
+    fg              = colors.black,
+    chrome_bg       = colors.lightGray,
+    chrome_fg       = colors.black,
+    accent          = colors.blue,
+    status_bg       = colors.gray,
+    status_fg       = colors.white,
+    link            = colors.blue,
+    tab_active_fg   = colors.black,
+    tab_active_bg   = colors.white,
+    tab_inactive_fg = colors.black,
+    tab_inactive_bg = colors.lightGray,
 }
 
 -- ---------------------------------------------------------------
 -- Геометрия
 -- ---------------------------------------------------------------
 
+-- Строки сверху вниз:
+--   tabBarY = 1   — вкладки
+--   addrY   = 2   — адрес-бар
+--   sepY    = 3   — разделитель
+--   contentY1..contentY2 — контент
+--   statusY = h   — статус
 local function layoutGeom()
     local w, h = term.getSize()
     return {
         w = w, h = h,
-        addrY    = 1,
-        sepY     = 2,
-        contentY1 = 3,
+        tabBarY   = 1,
+        addrY     = 2,
+        sepY      = 3,
+        contentY1 = 4,
         contentY2 = h - 1,
-        statusY  = h,
-        urlFieldX1 = 6,               -- после "URL: "
-        urlFieldX2 = w - 6,           -- оставляем место на " [GO]"
+        statusY   = h,
+        urlFieldX1 = 6,
+        urlFieldX2 = w - 6,
         goBtnX1  = w - 4,
         goBtnX2  = w - 1,
     }
 end
 
+-- Последние зоны tab-bar для hit-test.
+local tabZones = {}
+
 -- ---------------------------------------------------------------
 -- Отрисовка
 -- ---------------------------------------------------------------
 
+local function drawTabBar(g)
+    tabZones = tabs.renderBar(term, tabState, {
+        y = g.tabBarY,
+        width = g.w,
+        theme = {
+            active_fg   = THEME.tab_active_fg,
+            active_bg   = THEME.tab_active_bg,
+            inactive_fg = THEME.tab_inactive_fg,
+            inactive_bg = THEME.tab_inactive_bg,
+            accent      = THEME.accent,
+        },
+    })
+end
+
 local function drawChrome(g)
-    -- Строка адреса.
     term.setBackgroundColor(THEME.chrome_bg)
     term.setTextColor(THEME.chrome_fg)
     term.setCursorPos(1, g.addrY)
@@ -107,22 +134,20 @@ local function drawChrome(g)
     term.setCursorPos(1, g.addrY)
     term.write("URL: ")
 
-    -- Поле ввода.
     local fieldW = g.urlFieldX2 - g.urlFieldX1 + 1
     term.setCursorPos(g.urlFieldX1, g.addrY)
-    if state.focus == "address" then
+    if appState.focus == "address" then
         term.setBackgroundColor(colors.white)
         term.setTextColor(colors.black)
     else
         term.setBackgroundColor(colors.lightGray)
         term.setTextColor(colors.gray)
     end
-    local shown = state.urlInput
+    local shown = appState.urlInput
     if #shown > fieldW then shown = shown:sub(-fieldW) end
     shown = shown .. string.rep(" ", math.max(0, fieldW - #shown))
     term.write(shown)
 
-    -- Кнопка GO.
     term.setCursorPos(g.goBtnX1 - 1, g.addrY)
     term.setBackgroundColor(THEME.chrome_bg)
     term.setTextColor(THEME.chrome_fg)
@@ -132,7 +157,6 @@ local function drawChrome(g)
     term.setCursorPos(g.goBtnX1, g.addrY)
     term.write("[GO]")
 
-    -- Разделитель.
     term.setBackgroundColor(THEME.bg)
     term.setTextColor(colors.gray)
     term.setCursorPos(1, g.sepY)
@@ -143,14 +167,14 @@ local function drawContent(g)
     local vpH = g.contentY2 - g.contentY1 + 1
     if vpH < 1 then return end
 
-    if state.boxes and render then
-        render.draw(nil, state.boxes, {
+    local tab = currentTab()
+    if tab.boxes and render then
+        render.draw(nil, tab.boxes, {
             x = 1, y = g.contentY1,
             width = g.w, height = vpH,
-            scrollY = state.scrollY,
+            scrollY = tab.scrollY,
         }, { bg = THEME.bg, fg = THEME.fg })
     else
-        -- Заглушка если боксов нет.
         term.setBackgroundColor(THEME.bg)
         term.setTextColor(colors.gray)
         for y = g.contentY1, g.contentY2 do
@@ -160,19 +184,20 @@ local function drawContent(g)
         term.setCursorPos(2, g.contentY1 + 1)
         term.write("Введите URL и нажмите Enter.")
         term.setCursorPos(2, g.contentY1 + 2)
-        term.write("Tab — переключить фокус, стрелки — прокрутка.")
+        term.write("Tab — фокус, стрелки — прокрутка, Ctrl+T — новая вкладка.")
     end
 end
 
 local function drawStatus(g)
+    local tab = currentTab()
     term.setCursorPos(1, g.statusY)
     term.setBackgroundColor(THEME.status_bg)
     term.setTextColor(THEME.status_fg)
-    -- Breadcrumb-индикатор истории.
     local crumb = ""
-    if history.idx > 1 then crumb = crumb .. "<" else crumb = crumb .. " " end
-    if history.idx < #history.stack then crumb = crumb .. ">" else crumb = crumb .. " " end
-    local s = crumb .. " Статус: " .. tostring(state.status)
+    local h = tab.history
+    if h.idx > 1 then crumb = crumb .. "<" else crumb = crumb .. " " end
+    if h.idx < #h.stack then crumb = crumb .. ">" else crumb = crumb .. " " end
+    local s = crumb .. " Статус: " .. tostring(tab.status)
     if #s > g.w then s = s:sub(1, g.w) end
     s = s .. string.rep(" ", g.w - #s)
     term.write(s)
@@ -182,15 +207,15 @@ local function redraw()
     local g = layoutGeom()
     term.setBackgroundColor(THEME.bg)
     term.clear()
+    drawTabBar(g)
     drawChrome(g)
     drawContent(g)
     drawStatus(g)
 
-    -- Курсор в адрес-баре.
-    if state.focus == "address" then
+    if appState.focus == "address" then
         local fieldW = g.urlFieldX2 - g.urlFieldX1 + 1
-        local text = state.urlInput
-        local cp = state.cursorPos or (#text + 1)
+        local text = appState.urlInput
+        local cp = appState.cursorPos or (#text + 1)
         local offset = 0
         if #text > fieldW then offset = #text - fieldW end
         local cx = g.urlFieldX1 + (cp - 1 - offset)
@@ -205,44 +230,64 @@ local function redraw()
 end
 
 -- ---------------------------------------------------------------
+-- Извлечение <title>
+-- ---------------------------------------------------------------
+
+local function extractTitle(dom)
+    if not (dom and html and html.findAll) then return nil end
+    local nodes = html.findAll(dom, "title") or {}
+    for _, n in ipairs(nodes) do
+        if n.children then
+            for _, ch in ipairs(n.children) do
+                if ch.type == "text" and ch.text and ch.text ~= "" then
+                    local t = ch.text:gsub("^%s+", ""):gsub("%s+$", "")
+                    if t ~= "" then return t end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- ---------------------------------------------------------------
 -- Навигация
 -- ---------------------------------------------------------------
 
 local function navigate(u, opts)
     opts = opts or {}
+    local tab = currentTab()
+
     if not u or u == "" then
-        state.status = "пустой URL"
+        tab.status = "пустой URL"
         return
     end
 
     if urlLib and urlLib.isUrl and not urlLib.isUrl(u) then
-        -- Попробуем добавить схему.
         u = "http://" .. u
     end
 
-    state.status = "загрузка " .. u .. "..."
+    tab.status = "загрузка " .. u .. "..."
     redraw()
 
     if not http then
-        state.status = "ошибка: модуль http не загружен"
+        tab.status = "ошибка: модуль http не загружен"
         return
     end
 
     local ok, resp, err = pcall(http.get, u)
     if not ok then
-        state.status = "ошибка: " .. tostring(resp)
+        tab.status = "ошибка: " .. tostring(resp)
         return
     end
     if not resp then
-        state.status = "ошибка: " .. tostring(err)
+        tab.status = "ошибка: " .. tostring(err)
         return
     end
     if resp.status and resp.status >= 400 then
-        state.status = "HTTP " .. tostring(resp.status)
-        -- Всё равно попробуем отрисовать тело.
+        tab.status = "HTTP " .. tostring(resp.status)
     end
 
-    state.currentUrl = resp.finalUrl or u
+    tab.url = resp.finalUrl or u
     local body = resp.body or ""
 
     local dom
@@ -260,7 +305,7 @@ local function navigate(u, opts)
             { type = "text", text = body }
         }}
     end
-    state.dom = dom
+    tab.dom = dom
 
     local g = layoutGeom()
     local contentW = g.w
@@ -274,7 +319,6 @@ local function navigate(u, opts)
     end
 
     if not boxes then
-        -- Fallback: просто текст построчно.
         boxes = {}
         local y = 1
         for line in tostring(body):gmatch("([^\n]*)\n?") do
@@ -288,36 +332,50 @@ local function navigate(u, opts)
         total = y - 1
     end
 
-    state.boxes       = boxes
-    state.totalHeight = total or #boxes
-    state.scrollY     = 0
-    state.status      = "ok  (" .. #boxes .. " блоков, " ..
-                        tostring(state.totalHeight) .. " строк)"
-    state.focus       = "page"
+    tab.boxes       = boxes
+    tab.totalHeight = total or #boxes
+    tab.scrollY     = 0
+    tab.status      = "ok  (" .. #boxes .. " блоков, " ..
+                      tostring(tab.totalHeight) .. " строк)"
 
-    -- Обновляем поле адреса актуальным URL (после редиректов).
-    if state.currentUrl then
-        state.urlInput = state.currentUrl
-        state.cursorPos = #state.urlInput + 1
+    local title = extractTitle(dom) or tab.url
+    tabs.setTitle(tab, title)
+
+    appState.focus = "page"
+
+    if tab.url and tab.url ~= "" then
+        appState.urlInput = tab.url
+        appState.cursorPos = #appState.urlInput + 1
     end
 
     if not opts.skipHistory then
-        pushHistory(state.currentUrl or u)
+        pushHistory(tab, tab.url or u)
     end
 end
 
 local function historyBack()
-    if history.idx > 1 then
-        history.idx = history.idx - 1
-        navigate(history.stack[history.idx], { skipHistory = true })
+    local tab = currentTab()
+    local h = tab.history
+    if h.idx > 1 then
+        h.idx = h.idx - 1
+        navigate(h.stack[h.idx], { skipHistory = true })
     end
 end
 
 local function historyForward()
-    if history.idx < #history.stack then
-        history.idx = history.idx + 1
-        navigate(history.stack[history.idx], { skipHistory = true })
+    local tab = currentTab()
+    local h = tab.history
+    if h.idx < #h.stack then
+        h.idx = h.idx + 1
+        navigate(h.stack[h.idx], { skipHistory = true })
     end
+end
+
+-- После смены активной вкладки — синхронизируем адрес-бар.
+local function syncAddrFromTab()
+    local tab = currentTab()
+    appState.urlInput = tab.url or ""
+    appState.cursorPos = #appState.urlInput + 1
 end
 
 -- ---------------------------------------------------------------
@@ -325,23 +383,23 @@ end
 -- ---------------------------------------------------------------
 
 local function addrInsert(ch)
-    local cp = state.cursorPos or (#state.urlInput + 1)
-    state.urlInput = state.urlInput:sub(1, cp - 1) .. ch .. state.urlInput:sub(cp)
-    state.cursorPos = cp + #ch
+    local cp = appState.cursorPos or (#appState.urlInput + 1)
+    appState.urlInput = appState.urlInput:sub(1, cp - 1) .. ch .. appState.urlInput:sub(cp)
+    appState.cursorPos = cp + #ch
 end
 
 local function addrBackspace()
-    local cp = state.cursorPos or (#state.urlInput + 1)
+    local cp = appState.cursorPos or (#appState.urlInput + 1)
     if cp > 1 then
-        state.urlInput = state.urlInput:sub(1, cp - 2) .. state.urlInput:sub(cp)
-        state.cursorPos = cp - 1
+        appState.urlInput = appState.urlInput:sub(1, cp - 2) .. appState.urlInput:sub(cp)
+        appState.cursorPos = cp - 1
     end
 end
 
 local function addrDelete()
-    local cp = state.cursorPos or (#state.urlInput + 1)
-    if cp <= #state.urlInput then
-        state.urlInput = state.urlInput:sub(1, cp - 1) .. state.urlInput:sub(cp + 1)
+    local cp = appState.cursorPos or (#appState.urlInput + 1)
+    if cp <= #appState.urlInput then
+        appState.urlInput = appState.urlInput:sub(1, cp - 1) .. appState.urlInput:sub(cp + 1)
     end
 end
 
@@ -352,64 +410,98 @@ end
 local function maxScroll()
     local g = layoutGeom()
     local vpH = g.contentY2 - g.contentY1 + 1
-    local total = state.totalHeight or 0
+    local total = currentTab().totalHeight or 0
     return math.max(0, total - vpH)
 end
 
 local function scroll(delta)
-    local ns = (state.scrollY or 0) + delta
+    local tab = currentTab()
+    local ns = (tab.scrollY or 0) + delta
     if ns < 0 then ns = 0 end
     local m = maxScroll()
     if ns > m then ns = m end
-    state.scrollY = ns
+    tab.scrollY = ns
 end
 
 -- ---------------------------------------------------------------
 -- Event loop
 -- ---------------------------------------------------------------
 
+local shiftDown = false
+
 local function handleKey(k)
     if k == keys.escape then
-        state.running = false
+        appState.running = false
         return
     end
 
-    -- Отслеживаем состояние Alt (CC:Tweaked шлёт отдельные key-события).
+    -- Модификаторы.
     if k == keys.leftAlt or k == keys.rightAlt then
-        state.altDown = true
+        appState.altDown = true
         return
+    end
+    if k == keys.leftCtrl or k == keys.rightCtrl then
+        appState.ctrlDown = true
+        return
+    end
+    if k == keys.leftShift or k == keys.rightShift then
+        shiftDown = true
+        return
+    end
+
+    -- Ctrl-комбинации.
+    if appState.ctrlDown then
+        if k == keys.t then
+            tabs.newTab(tabState, "")
+            appState.urlInput = ""
+            appState.cursorPos = 1
+            appState.focus = "address"
+            return
+        elseif k == keys.w then
+            tabs.closeTab(tabState, tabState.active)
+            syncAddrFromTab()
+            return
+        elseif k == keys.tab then
+            if shiftDown then
+                tabs.prev(tabState)
+            else
+                tabs.next(tabState)
+            end
+            syncAddrFromTab()
+            return
+        end
     end
 
     if k == keys.tab then
-        state.focus = (state.focus == "address") and "page" or "address"
+        appState.focus = (appState.focus == "address") and "page" or "address"
         return
     end
 
-    -- Alt+Left/Right — история (работает в любом фокусе).
-    if state.altDown and k == keys.left then
+    -- Alt+Left/Right — история.
+    if appState.altDown and k == keys.left then
         historyBack()
         return
     end
-    if state.altDown and k == keys.right then
+    if appState.altDown and k == keys.right then
         historyForward()
         return
     end
 
-    if state.focus == "address" then
+    if appState.focus == "address" then
         if k == keys.enter then
-            navigate(state.urlInput)
+            navigate(appState.urlInput)
         elseif k == keys.backspace then
             addrBackspace()
         elseif k == keys.delete then
             addrDelete()
         elseif k == keys.left then
-            state.cursorPos = math.max(1, (state.cursorPos or 1) - 1)
+            appState.cursorPos = math.max(1, (appState.cursorPos or 1) - 1)
         elseif k == keys.right then
-            state.cursorPos = math.min(#state.urlInput + 1, (state.cursorPos or 1) + 1)
+            appState.cursorPos = math.min(#appState.urlInput + 1, (appState.cursorPos or 1) + 1)
         elseif k == keys.home then
-            state.cursorPos = 1
+            appState.cursorPos = 1
         elseif k == keys["end"] then
-            state.cursorPos = #state.urlInput + 1
+            appState.cursorPos = #appState.urlInput + 1
         end
     else
         -- focus == "page"
@@ -422,11 +514,10 @@ local function handleKey(k)
         elseif k == keys.pageDown then
             scroll(10)
         elseif k == keys.home then
-            state.scrollY = 0
+            currentTab().scrollY = 0
         elseif k == keys["end"] then
-            state.scrollY = maxScroll()
+            currentTab().scrollY = maxScroll()
         elseif k == keys.backspace then
-            -- Backspace в режиме страницы — назад по истории (как в старых браузерах).
             historyBack()
         end
     end
@@ -434,45 +525,76 @@ end
 
 local function handleKeyUp(k)
     if k == keys.leftAlt or k == keys.rightAlt then
-        state.altDown = false
+        appState.altDown = false
+    end
+    if k == keys.leftCtrl or k == keys.rightCtrl then
+        appState.ctrlDown = false
+    end
+    if k == keys.leftShift or k == keys.rightShift then
+        shiftDown = false
     end
 end
 
 local function handleChar(ch)
-    if state.focus == "address" then
+    if appState.ctrlDown then
+        return
+    end
+    if appState.focus == "address" then
         addrInsert(ch)
     end
 end
 
 local function handleMouseClick(btn, x, y)
     local g = layoutGeom()
+
+    -- Клик по tab-bar.
+    if y == g.tabBarY then
+        local z = tabs.hitBar(tabZones, x)
+        if z then
+            if z.type == "tab" then
+                tabs.activate(tabState, z.idx)
+                syncAddrFromTab()
+            elseif z.type == "close" then
+                tabs.closeTab(tabState, z.idx)
+                syncAddrFromTab()
+            elseif z.type == "new" then
+                tabs.newTab(tabState, "")
+                appState.urlInput = ""
+                appState.cursorPos = 1
+                appState.focus = "address"
+            end
+        end
+        return
+    end
+
     if y == g.addrY then
         if x >= g.goBtnX1 and x <= g.goBtnX2 + 1 then
-            navigate(state.urlInput)
+            navigate(appState.urlInput)
         elseif x >= g.urlFieldX1 and x <= g.urlFieldX2 then
-            state.focus = "address"
+            appState.focus = "address"
             local fieldW = g.urlFieldX2 - g.urlFieldX1 + 1
             local offset = 0
-            if #state.urlInput > fieldW then offset = #state.urlInput - fieldW end
-            state.cursorPos = math.min(#state.urlInput + 1, (x - g.urlFieldX1 + 1) + offset)
+            if #appState.urlInput > fieldW then offset = #appState.urlInput - fieldW end
+            appState.cursorPos = math.min(#appState.urlInput + 1, (x - g.urlFieldX1 + 1) + offset)
         end
     elseif y >= g.contentY1 and y <= g.contentY2 then
-        state.focus = "page"
-        if not (state.boxes and render and render.hitTest) then return end
+        appState.focus = "page"
+        local tab = currentTab()
+        if not (tab.boxes and render and render.hitTest) then return end
         local viewport = {
             x = 1, y = g.contentY1,
             width = g.w, height = g.contentY2 - g.contentY1 + 1,
         }
-        local box = render.hitTest(state.boxes, x, y, state.scrollY or 0, viewport)
+        local box = render.hitTest(tab.boxes, x, y, tab.scrollY or 0, viewport)
         if not box then return end
 
         if box.type == "link" and box.href then
             if link and link.boxToAbsoluteUrl then
-                local abs = link.boxToAbsoluteUrl(box, state.currentUrl or "")
+                local abs = link.boxToAbsoluteUrl(box, tab.url or "")
                 if abs then
                     navigate(abs)
                 else
-                    state.status = "не удалось разрешить ссылку: " .. tostring(box.href)
+                    tab.status = "не удалось разрешить ссылку: " .. tostring(box.href)
                 end
             else
                 navigate(box.href)
@@ -484,12 +606,11 @@ local function handleMouseClick(btn, x, y)
                     navigate = function(u) navigate(u) end,
                     submit = function(formId)
                         if not (form and form.submit and html and html.findAll) then return end
-                        local forms = html.findAll(state.dom, "form") or {}
+                        local forms = html.findAll(tab.dom, "form") or {}
                         for _, f in ipairs(forms) do
                             if f.attrs and f.attrs.id == formId then
-                                local ok, resp = pcall(form.submit, f, state.currentUrl, http)
+                                local ok, resp = pcall(form.submit, f, tab.url, http)
                                 if ok and resp then
-                                    -- Если пришёл finalUrl — идём на него как при обычной навигации.
                                     if resp.finalUrl then
                                         navigate(resp.finalUrl)
                                     end
@@ -498,19 +619,17 @@ local function handleMouseClick(btn, x, y)
                             end
                         end
                     end,
-                    alert = function(msg) state.status = "alert: " .. tostring(msg) end,
+                    alert = function(msg) tab.status = "alert: " .. tostring(msg) end,
                     back = historyBack,
                     forward = historyForward,
                 }
                 local ok, err = pcall(js.eval, onclick, jsCtx)
                 if not ok then
-                    state.status = "js ошибка: " .. tostring(err)
+                    tab.status = "js ошибка: " .. tostring(err)
                 end
             else
-                -- Submit-кнопка формы: ищем ближайшую родительскую <form>, содержащую эту кнопку.
                 if form and form.submit and html and html.findAll then
-                    local forms = html.findAll(state.dom, "form") or {}
-                    -- Ищем форму, в поддереве которой есть наш button node.
+                    local forms = html.findAll(tab.dom, "form") or {}
                     local function contains(node, target)
                         if node == target then return true end
                         if node.children then
@@ -528,20 +647,19 @@ local function handleMouseClick(btn, x, y)
                         end
                     end
                     if parentForm then
-                        local ok, resp = pcall(form.submit, parentForm, state.currentUrl, http)
+                        local ok, resp = pcall(form.submit, parentForm, tab.url, http)
                         if ok and resp and resp.finalUrl then
                             navigate(resp.finalUrl)
                         elseif not ok then
-                            state.status = "ошибка отправки формы: " .. tostring(resp)
+                            tab.status = "ошибка отправки формы: " .. tostring(resp)
                         end
                     else
-                        state.status = "кнопка не связана с формой"
+                        tab.status = "кнопка не связана с формой"
                     end
                 end
             end
         elseif box.type == "input" then
-            -- TODO (iter 10): инлайн-редактирование значения поля.
-            state.status = "редактирование полей появится в следующей итерации"
+            currentTab().status = "редактирование полей появится в следующей итерации"
         end
     end
 end
@@ -558,8 +676,7 @@ end
 -- ---------------------------------------------------------------
 
 local function main()
-    -- Проверка критических модулей.
-    if not http or not render then
+    if not http or not render or not tabs then
         term.setBackgroundColor(colors.white)
         term.setTextColor(colors.red)
         term.clear(); term.setCursorPos(1, 1)
@@ -569,13 +686,14 @@ local function main()
         if not html   then print("  - html.lua")   end
         if not layout then print("  - layout.lua") end
         if not render then print("  - render.lua") end
+        if not tabs   then print("  - tabs.lua")   end
         print("Нажмите любую клавишу для выхода.")
         os.pullEvent("key")
         return
     end
 
     redraw()
-    while state.running do
+    while appState.running do
         local ev = { os.pullEvent() }
         local name = ev[1]
         if name == "key" then
@@ -589,7 +707,7 @@ local function main()
         elseif name == "mouse_scroll" then
             handleMouseScroll(ev[2], ev[3], ev[4])
         elseif name == "term_resize" then
-            -- ничего, просто перерисуем
+            -- перерисуем
         end
         redraw()
     end

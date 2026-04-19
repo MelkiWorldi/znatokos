@@ -1,9 +1,9 @@
 return {
     id = "com.znatok.browser",
     name = "Браузер",
-    version = "0.2.0",
+    version = "0.3.0",
     author = "znatok",
-    description = "Web-браузер с HTML, ссылками, формами и историей",
+    description = "Web-браузер: HTML+CSS, ссылки, формы, вкладки, история",
     icon = { color = colors.lightBlue, glyph = "W" },
     entry = "main.lua",
     files = {
@@ -16,6 +16,9 @@ return {
         "lib/link.lua",
         "lib/form.lua",
         "lib/js.lua",
+        "lib/css.lua",
+        "lib/tabs.lua",
+        "themes/default.lua",
     },
     capabilities = { "ui.window", "net.http", "fs.home" },
     min_os_version = "0.3.0",
