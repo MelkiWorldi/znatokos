@@ -61,7 +61,50 @@ function M.draw(win, boxes, viewport, theme)
 
     if not boxes then return end
 
+    -- Пасс 1: фоновые блоки (type="bg") — рисуем первыми, чтобы контент сверху.
     for _, b in ipairs(boxes) do
+        if b.type == "bg" and b.style and b.style.bg then
+            local screenY = vy + ((b.y or 1) - 1) - scrollY
+            local bxStart = vx + ((b.x or 1) - 1)
+            local bh = b.h or 1
+            local bw = b.w or vw
+            for yOff = 0, bh - 1 do
+                local sy = screenY + yOff
+                if sy >= vy and sy <= vy + vh - 1 then
+                    term.setCursorPos(bxStart, sy)
+                    term.setBackgroundColor(b.style.bg)
+                    local fillW = math.min(bw, (vx + vw - 1) - bxStart + 1)
+                    if fillW > 0 then term.write(string.rep(" ", fillW)) end
+                end
+            end
+        end
+    end
+
+    -- Пасс 2: картинки (type="image") — рендерятся через b._imageData если main.lua его положил.
+    for _, b in ipairs(boxes) do
+        if b.type == "image" and b._imageData then
+            local screenY = vy + ((b.y or 1) - 1) - scrollY
+            if screenY >= vy and screenY <= vy + vh - 1 then
+                -- image.render использует term и рисует в текущей позиции.
+                local okImg, imgLib = pcall(require, "image")
+                if not okImg and _G.__browser_imageLib then imgLib = _G.__browser_imageLib end
+                if imgLib and imgLib.render then
+                    local drawX = vx + ((b.x or 1) - 1)
+                    pcall(imgLib.render, term, b._imageData, drawX, screenY)
+                else
+                    -- Фоллбэк: "[IMG]"
+                    term.setCursorPos(vx + ((b.x or 1) - 1), screenY)
+                    term.setBackgroundColor(theme.bg)
+                    term.setTextColor(theme.link_fg or theme.link or colors.cyan)
+                    term.write("[IMG:" .. (b.alt or b.src or "?") .. "]")
+                end
+            end
+        end
+    end
+
+    -- Пасс 3: текст и интерактив
+    for _, b in ipairs(boxes) do
+        if b.type == "bg" or b.type == "image" then goto continue end
         local bx = b.x or 1
         local by = b.y or 1
         local screenY = vy + (by - 1) - scrollY
@@ -131,6 +174,7 @@ function M.draw(win, boxes, viewport, theme)
                 term.write(txt)
             end
         end
+        ::continue::
     end
 end
 

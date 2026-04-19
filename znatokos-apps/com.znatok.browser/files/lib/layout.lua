@@ -391,7 +391,31 @@ local function emitHr(ctx)
 end
 
 local function emitImg(ctx, node)
-    local alt = node.attrs and node.attrs.alt
+    local attrs = node.attrs or {}
+    local src = attrs.src
+    local alt = attrs.alt
+    -- Если src указан — порождаем box type="image" (main.lua догрузит и отрисует).
+    -- Иначе — текстовый плейсхолдер.
+    if src and (src:match("%.nfp$") or src:match("%.nft$")) then
+        -- Резервируем место под картинку. Реальные размеры выяснятся после http.get.
+        -- Пока что задаём h=8 (средняя картинка), width=ctx.width (во всю строку).
+        -- main.lua после загрузки пересчитает layout если размеры не совпали.
+        local estH = tonumber(attrs.height) or 8
+        local estW = tonumber(attrs.width)  or math.min(32, ctx.width)
+        hardNewline(ctx)
+        local box = {
+            type = "image",
+            x = ctx.cx, y = ctx.cy, w = estW, h = estH,
+            src = src, alt = alt, node = node,
+            style = { fg = C.white, bg = ctx.style.bg },
+        }
+        ctx.boxes[#ctx.boxes+1] = box
+        for _ = 1, estH - 1 do hardNewline(ctx) end
+        markY(ctx)
+        hardNewline(ctx)
+        return
+    end
+    -- Обычный placeholder
     local text = alt and ("[IMG: " .. alt .. "]") or "[IMG]"
     local w = utf8Len(text)
     if ctx.cx + w - 1 > ctx.width then
@@ -575,9 +599,11 @@ local function walkNode(node, ctx)
         return
     end
 
-    -- Блочный? Перенос строки перед.
+    -- Блочный? Перенос строки перед. Запоминаем y-начало для фоновой заливки.
+    local blockStartY = nil
     if BLOCK[tag] then
         newline(ctx)
+        blockStartY = ctx.cy
     end
 
     -- Списки: заведём стек.
@@ -641,6 +667,24 @@ local function walkNode(node, ctx)
     if not VOID[tag] then
         for _, ch in ipairs(node.children or {}) do
             walkNode(ch, ctx)
+        end
+    end
+
+    -- Фоновая заливка для блочных элементов с явным background.
+    -- Добавляем box type="bg" ПЕРЕД остальными боксами этого блока в том же y-диапазоне.
+    -- Реализация — append в конец; render.lua рисует bg-боксы первыми (отсортирует по z).
+    if blockStartY and ctx.style and ctx.style.bg
+       and savedStyle and ctx.style.bg ~= (savedStyle.bg or nil) then
+        local blockEndY = ctx.cy
+        if ctx.cx > 1 + ctx.indent then blockEndY = ctx.cy end
+        if blockEndY >= blockStartY then
+            ctx.boxes[#ctx.boxes+1] = {
+                type = "bg",
+                x = 1, y = blockStartY,
+                w = ctx.width, h = blockEndY - blockStartY + 1,
+                style = { bg = ctx.style.bg, fg = ctx.style.fg },
+                _z = -1,   -- фон рисуется до контента
+            }
         end
     end
 

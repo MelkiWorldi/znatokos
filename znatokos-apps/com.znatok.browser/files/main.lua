@@ -30,6 +30,9 @@ local js     = loadLib("js.lua")
 local tabs   = loadLib("tabs.lua")
 local search = loadLib("search.lua")
 local css    = loadLib("css.lua")
+local palette = loadLib("palette.lua")
+local imageLib = loadLib("image.lua")
+if imageLib then _G.__browser_imageLib = imageLib end
 -- Имя `bmstore`, чтобы не конфликтовать с глобальным `store`.
 local bmstore = loadLib("store.lua")
 
@@ -553,6 +556,24 @@ local function navigate(u, opts)
 
     -- Автоплей <audio autoplay> (если права выданы и не mute).
     pcall(autoplayPage, tab.dom)
+
+    -- Асинхронная загрузка картинок <img src="...nfp">.
+    -- Для каждого image-бокса загружаем NFP-файл и сохраняем в _imageData,
+    -- чтобы render.draw мог отрисовать реальный пиксель-контент. Сбои — тихие.
+    if imageLib and http then
+        local tab = currentTab()
+        for _, b in ipairs(tab.boxes or {}) do
+            if b.type == "image" and b.src and not b._imageData then
+                local absUrl = b.src
+                if urlLib and urlLib.resolve and tab.url then
+                    local okU, u = pcall(urlLib.resolve, tab.url, b.src)
+                    if okU and u then absUrl = u end
+                end
+                local okI, img = pcall(imageLib.fetch, absUrl, http)
+                if okI and img then b._imageData = img end
+            end
+        end
+    end
 end
 
 local function historyBack()
@@ -1161,6 +1182,9 @@ local function main()
         end
         redraw()
     end
+
+    -- Восстанавливаем палитру CC до системных дефолтов перед выходом.
+    if palette and palette.restore then pcall(palette.restore, term) end
 
     term.setCursorBlink(false)
     term.setBackgroundColor(colors.black)
