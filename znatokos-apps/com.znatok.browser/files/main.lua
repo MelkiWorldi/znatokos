@@ -33,6 +33,60 @@ local css    = loadLib("css.lua")
 -- Имя `bmstore`, чтобы не конфликтовать с глобальным `store`.
 local bmstore = loadLib("store.lua")
 
+-- Аудио: модуль audio/speaker доступен если cap periph.speaker выдан.
+-- Если нет (отказано пользователем) — остальная логика браузера работает.
+local audioLib
+do
+    local ok, mod = pcall(znatokos.use, "audio/speaker")
+    if ok then audioLib = mod end
+end
+local audioMuted = false  -- Ctrl+M toggle
+
+-- Универсальный плейер для <audio src=...> / onclick.
+-- Поддерживаемые схемы:
+--   sound:<event>[?pitch=N&vol=N]   — MC sound event (block.note_block.bell)
+--   note:<instrument>:<pitch>       — note-block нота (harp, bell, ...)
+--   dfpwm:<full_http_url>           — DFPWM файл по сети (streamDFPWM)
+local function playAudioSrc(src)
+    if audioMuted or not audioLib or not src then return false, "muted/disabled" end
+    if type(src) ~= "string" then return false, "bad src" end
+    local scheme, rest = src:match("^(%w+):(.+)$")
+    if not scheme then return false, "no scheme" end
+    if scheme == "sound" then
+        local name, qs = rest:match("^([^?]+)%??(.*)$")
+        local pitch = tonumber(qs and qs:match("pitch=([%-%.%d]+)")) or 1
+        local vol   = tonumber(qs and qs:match("vol=([%-%.%d]+)")) or 1
+        return audioLib.playSound(name, vol, pitch)
+    elseif scheme == "note" then
+        local instr, pitch = rest:match("^([^:]+):?(.*)$")
+        pitch = tonumber(pitch) or 12
+        return audioLib.playNote(instr or "harp", 1, pitch)
+    elseif scheme == "dfpwm" then
+        if not http or not audioLib.streamDFPWM then return false, "dfpwm unsupported" end
+        local okR, resp = pcall(http.get, rest)
+        if not okR or not resp or not resp.body then return false, "fetch failed" end
+        -- Стрим блокирует UI — запустим в отдельной таске через parallel — упрощаем: синхронно.
+        return audioLib.streamDFPWM(resp.body, 1)
+    end
+    return false, "unknown scheme " .. scheme
+end
+
+local function stopAudio()
+    if audioLib then pcall(audioLib.stopAll) end
+end
+
+-- Проигрываем autoplay-audio при загрузке страницы.
+local function autoplayPage(dom)
+    if not html or not html.findAll or not audioLib then return end
+    local nodes = html.findAll(dom, "audio") or {}
+    for _, n in ipairs(nodes) do
+        if n.attrs and n.attrs.autoplay ~= nil and n.attrs.src then
+            pcall(playAudioSrc, n.attrs.src)
+            break  -- только первый autoplay на странице
+        end
+    end
+end
+
 -- Загружаем тему (themes/default.lua, не lib/).
 local themeFromFile
 do
@@ -454,6 +508,9 @@ local function navigate(u, opts)
     if not opts.skipHistory then
         pushHistory(tab, tab.url or u)
     end
+
+    -- Автоплей <audio autoplay> (если права выданы и не mute).
+    pcall(autoplayPage, tab.dom)
 end
 
 local function historyBack()
@@ -774,6 +831,12 @@ local function handleKey(k)
             -- Ctrl+0: сбросить масштаб
             appState.pageZoom = 1.0
             reflowCurrent(); return
+        elseif k == keys.m then
+            -- Ctrl+M: mute / unmute audio
+            audioMuted = not audioMuted
+            if audioMuted then stopAudio() end
+            currentTab().status = audioMuted and "звук: выкл" or "звук: вкл"
+            return
         end
     end
 
@@ -933,6 +996,12 @@ local function handleMouseClick(btn, x, y)
                     alert = function(msg) tab.status = "alert: " .. tostring(msg) end,
                     back = historyBack,
                     forward = historyForward,
+                    -- Аудио API из onclick:
+                    --   playSound('sound:block.note_block.bell')
+                    --   playSound('note:pling:14')
+                    --   stopAudio()
+                    playSound = function(src) pcall(playAudioSrc, src) end,
+                    stopAudio = function() pcall(stopAudio) end,
                 }
                 local ok, err = pcall(js.eval, onclick, jsCtx)
                 if not ok then

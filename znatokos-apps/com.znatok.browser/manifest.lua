@@ -1,9 +1,9 @@
 return {
     id = "com.znatok.browser",
     name = "Браузер",
-    version = "1.1.0",
+    version = "1.2.0",
     author = "znatok",
-    description = "Web-браузер: HTML+CSS, вкладки, закладки, поиск, масштаб (F11 / Ctrl+=)",
+    description = "Web-браузер: HTML+CSS, вкладки, закладки, поиск, масштаб, звук (<audio>)",
     icon = { color = colors.lightBlue, glyph = "W" },
     entry = "main.lua",
     files = {
@@ -22,7 +22,7 @@ return {
         "lib/store.lua",
         "themes/default.lua",
     },
-    capabilities = { "ui.window", "net.http", "fs.home" },
+    capabilities = { "ui.window", "net.http", "fs.home", "periph.speaker" },
     min_os_version = "0.3.0",
     deps = {},
 }
