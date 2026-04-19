@@ -426,10 +426,18 @@ function M.build(opts)
     local allowedModules = opts.allowedModules or {}
     local function safeUse(modulePath)
         if type(modulePath) ~= "string" then error("use: ожидается строка", 2) end
-        -- ищем сначала в appDir
+        -- Запрещаем traversal и абсолютные пути
+        if modulePath:find("%.%.") or modulePath:sub(1, 1) == "/" then
+            error("use: недопустимый путь: " .. modulePath, 2)
+        end
+        -- ищем сначала в appDir с строгой проверкой префикса
         if appDir then
             local local1 = fs.combine(appDir, modulePath .. ".lua")
-            if fs.exists(local1) then
+            local rootNorm = normalize(appDir)
+            local pathNorm = normalize(local1)
+            local insideApp = pathNorm == rootNorm
+                or pathNorm:sub(1, #rootNorm + 1) == rootNorm .. "/"
+            if insideApp and fs.exists(local1) then
                 local chunk, err = loadfile(local1, "bt", env)
                 if not chunk then error("use(" .. modulePath .. "): " .. tostring(err), 2) end
                 return chunk()

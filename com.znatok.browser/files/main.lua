@@ -27,8 +27,21 @@ local form   = loadLib("form.lua")
 local js     = loadLib("js.lua")
 local tabs   = loadLib("tabs.lua")
 local search = loadLib("search.lua")
+local css    = loadLib("css.lua")
 -- Имя `bmstore`, чтобы не конфликтовать с глобальным `store`.
 local bmstore = loadLib("store.lua")
+
+-- Загружаем тему (themes/default.lua, не lib/).
+local themeFromFile
+do
+    local base = (znatokos and znatokos.app and znatokos.app.dir) or ""
+    local path = base .. "/themes/default.lua"
+    local okT, chunkOrErr = pcall(loadfile, path)
+    if okT and chunkOrErr then
+        local okR, tbl = pcall(chunkOrErr)
+        if okR and type(tbl) == "table" then themeFromFile = tbl end
+    end
+end
 
 -- Пробрасываем url-модуль в link.lua (у link.lua нет require в CC).
 if link and link._setUrlLib and urlLib then
@@ -89,6 +102,14 @@ local THEME = {
     tab_inactive_fg = colors.black,
     tab_inactive_bg = colors.lightGray,
 }
+
+-- Мёрджим тему из файла (если загрузилась). Значения из themes/default.lua
+-- перекрывают захардкоженные дефолты — так можно менять тему без правки main.lua.
+if themeFromFile then
+    for k, v in pairs(themeFromFile) do THEME[k] = v end
+    -- Алиас: render.lua ожидает поле .link для ссылок.
+    THEME.link = THEME.link or THEME.link_fg or colors.blue
+end
 
 -- ---------------------------------------------------------------
 -- Геометрия
@@ -368,8 +389,23 @@ local function navigate(u, opts)
     local g = layoutGeom()
     local contentW = g.w
     local boxes, total
+    -- Применяем CSS (собираем <style> блоки + inline styles).
+    local rulesList = {}
+    if css and html and html.findAll then
+        local styleNodes = html.findAll(dom, "style") or {}
+        for _, sn in ipairs(styleNodes) do
+            local txt = (html.getText and html.getText(sn)) or ""
+            local okP, rules = pcall(css.parseStyleBlock, txt)
+            if okP and rules then
+                for _, r in ipairs(rules) do rulesList[#rulesList + 1] = r end
+            end
+        end
+        pcall(css.apply, dom, rulesList)
+    end
+    local cssOpts = css and { rulesList = rulesList, inlineParser = css.parseInline } or nil
+
     if layout and layout.compute then
-        local okL, lres = pcall(layout.compute, dom, contentW, {})
+        local okL, lres = pcall(layout.compute, dom, contentW, { css = cssOpts, theme = THEME })
         if okL and lres then
             boxes = lres.boxes or lres
             total = lres.totalHeight or 0
@@ -470,8 +506,23 @@ local function openSpecialPage(content, pseudoUrl)
     local g = layoutGeom()
     local contentW = g.w
     local boxes, total
+    -- Применяем CSS (собираем <style> блоки + inline styles).
+    local rulesList = {}
+    if css and html and html.findAll then
+        local styleNodes = html.findAll(dom, "style") or {}
+        for _, sn in ipairs(styleNodes) do
+            local txt = (html.getText and html.getText(sn)) or ""
+            local okP, rules = pcall(css.parseStyleBlock, txt)
+            if okP and rules then
+                for _, r in ipairs(rules) do rulesList[#rulesList + 1] = r end
+            end
+        end
+        pcall(css.apply, dom, rulesList)
+    end
+    local cssOpts = css and { rulesList = rulesList, inlineParser = css.parseInline } or nil
+
     if layout and layout.compute then
-        local okL, lres = pcall(layout.compute, dom, contentW, {})
+        local okL, lres = pcall(layout.compute, dom, contentW, { css = cssOpts, theme = THEME })
         if okL and lres then
             boxes = lres.boxes or lres
             total = lres.totalHeight or 0
@@ -802,7 +853,7 @@ local function handleMouseClick(btn, x, y)
                         local forms = html.findAll(tab.dom, "form") or {}
                         for _, f in ipairs(forms) do
                             if f.attrs and f.attrs.id == formId then
-                                local ok, resp = pcall(form.submit, f, tab.url, http)
+                                local ok, resp = pcall(form.submit, f, tab.url, http, urlLib)
                                 if ok and resp then
                                     if resp.finalUrl then
                                         navigate(resp.finalUrl)
@@ -840,7 +891,7 @@ local function handleMouseClick(btn, x, y)
                         end
                     end
                     if parentForm then
-                        local ok, resp = pcall(form.submit, parentForm, tab.url, http)
+                        local ok, resp = pcall(form.submit, parentForm, tab.url, http, urlLib)
                         if ok and resp and resp.finalUrl then
                             navigate(resp.finalUrl)
                         elseif not ok then

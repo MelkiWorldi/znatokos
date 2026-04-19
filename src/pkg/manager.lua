@@ -114,10 +114,18 @@ end
 function M.install(appId, opts)
     opts = opts or {}
     if opts.withDeps == nil then opts.withDeps = true end
+    opts._installing = opts._installing or {}
 
     if type(appId) ~= "string" or appId == "" then
         return false, "appId обязателен"
     end
+
+    -- Защита от циклических зависимостей
+    if opts._installing[appId] then
+        log.warn("pkg: цикл зависимостей обнаружен на " .. appId .. ", пропускаем")
+        return true
+    end
+    opts._installing[appId] = true
 
     log.info("pkg: установка " .. appId)
 

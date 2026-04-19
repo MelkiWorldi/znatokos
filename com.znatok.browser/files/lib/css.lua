@@ -474,7 +474,15 @@ function M.apply(domRoot, rulesList, inheritFromParent)
     rulesList = rulesList or {}
 
     local function walk(node, ancestors, inherited)
-        if node.kind ~= "elem" then return end
+        -- Text/document-корневой узел: не стилизуем сам, но идём в детей.
+        if node.kind ~= "elem" then
+            if node.children then
+                for _, ch in ipairs(node.children) do
+                    walk(ch, ancestors, inherited)
+                end
+            end
+            return
+        end
 
         -- Шаг 1: базовый стиль из наследуемых полей родителя.
         local style = inherit_from(inherited)

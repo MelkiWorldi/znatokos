@@ -1,18 +1,19 @@
 -- Обёртка над rednet. Автоматически открывает все модемы при первом вызове,
 -- даёт отправку/приём фреймов с протоколом ЗнатокOS.
 local M = {}
-local opened = false
 
+-- Всегда сканируем модемы заново: кэш кidleрушился на peripheral_detach.
+-- ensureOpen дёшев — проверка через rednet.isOpen + open только если ещё не.
 function M.ensureOpen()
-    if opened then return true end
     local any = false
     for _, side in ipairs(peripheral.getNames()) do
         if peripheral.getType(side) == "modem" then
-            if not rednet.isOpen(side) then rednet.open(side) end
-            any = true
+            if not rednet.isOpen(side) then
+                pcall(rednet.open, side)
+            end
+            if rednet.isOpen(side) then any = true end
         end
     end
-    opened = any
     return any
 end
 
@@ -42,12 +43,13 @@ function M.receive(filter, timeout)
     if not M.ensureOpen() then return nil, nil, "нет модема" end
     local deadline = timeout and (os.clock() + timeout) or nil
     while true do
-        local id, msg = rednet.receive("znatokos", timeout)
+        local remaining = deadline and math.max(0, deadline - os.clock()) or nil
+        if deadline and remaining <= 0 then return nil, nil, "timeout" end
+        local id, msg = rednet.receive("znatokos", remaining)
         if not id then return nil, nil, "timeout" end
         if type(msg) == "table" and (not filter or msg.proto == filter) then
             return msg, id
         end
-        if deadline and os.clock() > deadline then return nil, nil, "timeout" end
     end
 end
 

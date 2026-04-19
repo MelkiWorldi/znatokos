@@ -22,9 +22,11 @@ local function cfgPath()
     return paths.ETC .. "/node.cfg"
 end
 
--- Генерация 16 hex-символов (8 случайных байт) на базе math.random.
+-- Генерация 16 hex-символов (8 случайных байт). Seed инициализируется
+-- один раз при загрузке модуля, а не на каждый вызов randHex — иначе
+-- два подряд randHex() в одной миллисекунде дадут одинаковый UUID.
+math.randomseed(os.epoch("utc"))
 local function randHex()
-    math.randomseed(os.epoch("utc"))
     local parts = {}
     for i = 1, 16 do
         parts[i] = string.format("%x", math.random(0, 15))

@@ -113,13 +113,11 @@ function M.draw(win, boxes, viewport, theme)
 
                 local txt
                 if bt == "button" then
-                    txt = "[ " .. (b.text or "") .. " ]"
+                    -- layout уже включил "[ ... ]" в b.text — не оборачиваем повторно
+                    txt = b.text or ""
                 elseif bt == "input" then
-                    local w = b.w or 10
-                    local val = b.value or b.text or ""
-                    if #val > w - 2 then val = val:sub(-(w - 2)) end
-                    local pad = string.rep("_", math.max(0, w - 2 - #val))
-                    txt = "[" .. val .. pad .. "]"
+                    -- layout уже сформировал "[value____]" в b.text, просто используем его
+                    txt = b.text or (b.value and ("[" .. b.value .. "]") or "[]")
                 elseif bt == "hr" then
                     local w = b.w or (vw - (bx - 1))
                     txt = string.rep("-", math.max(1, w))

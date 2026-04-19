@@ -23,10 +23,10 @@ local VOID = {
 }
 
 -- «Сырые» элементы — их содержимое до закрывающего тега не парсится как HTML.
--- script/style — по стандарту. textarea/pre/code добавлены по ТЗ.
+-- Только script/style/textarea по стандарту HTML5. pre/code содержат обычный HTML
+-- (<b>, <a> и т.п. должны парситься), сохраняя пробелы — это забота layout, не парсера.
 local RAW = {
     script = true, style = true, textarea = true,
-    pre = true, code = true,
 }
 
 -- Таблица HTML-энтити (самые популярные; остальные — через числовые ссылки).

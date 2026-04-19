@@ -213,13 +213,28 @@ function M.resolve(baseUrl, relativeUrl)
         return base.scheme .. "://" .. authority .. base.path .. (base.query or "") .. relativeUrl
     end
 
-    -- Относительный путь: берём директорию base.path
+    -- Относительный путь: берём директорию base.path + нормализуем `..`/`.`
     local dir = dirOf(base.path)
     local authority = base.host
     if base.port and base.port ~= DEFAULT_PORTS[base.scheme] then
         authority = authority .. ":" .. tostring(base.port)
     end
-    return base.scheme .. "://" .. authority .. dir .. relativeUrl
+    local combined = dir .. relativeUrl
+    -- RFC 3986 remove_dot_segments (упрощённо)
+    local segs = {}
+    for seg in combined:gmatch("[^/]+") do
+        if seg == ".." then
+            if #segs > 0 then table.remove(segs) end
+        elseif seg ~= "." then
+            segs[#segs + 1] = seg
+        end
+    end
+    local normalized = "/" .. table.concat(segs, "/")
+    -- Сохраняем trailing slash если был
+    if combined:sub(-1) == "/" and normalized:sub(-1) ~= "/" then
+        normalized = normalized .. "/"
+    end
+    return base.scheme .. "://" .. authority .. normalized
 end
 
 -- Парсит query-string в таблицу. Принимает как с префиксом ?, так и без.
