@@ -141,7 +141,7 @@ local function doRequest(requestUrl, method, body, headers, timeout)
         method = method,
         body = body,
         headers = headers,
-        binary = false,
+        binary = opts.binary and true or false,
         redirect = false,
     })
 

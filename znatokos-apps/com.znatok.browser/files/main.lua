@@ -33,6 +33,7 @@ local css    = loadLib("css.lua")
 local palette = loadLib("palette.lua")
 local imageLib = loadLib("image.lua")
 if imageLib then _G.__browser_imageLib = imageLib end
+local hdrender = loadLib("hdrender.lua")
 -- Имя `bmstore`, чтобы не конфликтовать с глобальным `store`.
 local bmstore = loadLib("store.lua")
 
@@ -54,6 +55,32 @@ if http and http._setProxy then http._setProxy(HTTP_PROXY_BASE) end
 local IMG_PROXY_ENABLED = true   -- Ctrl+I toggle
 local IMG_PROXY_DEFAULT_W = 40
 local IMG_PROXY_DEFAULT_H = 16
+local IMG_RAW_BASE        = "http://72.56.109.107:8088/img_raw"   -- HD-режим: raw RGB
+
+-- ---------------------------------------------------------------
+-- HDMonitor (Day 7): опциональный второй экран
+-- ---------------------------------------------------------------
+--
+-- Если peripheral.find доступен и найден hdmonitor — активируем HD-режим:
+-- основной UI (адрес-бар, вкладки) остаётся на CC-экране, а содержимое
+-- страницы ДОПОЛНИТЕЛЬНО рендерится на HDMonitor в true-color.
+local hdState = { enabled = false, dev = nil, w = 0, h = 0, forceOff = false }
+do
+    if peripheral and peripheral.find then
+        local ok, dev = pcall(peripheral.find, "hdmonitor")
+        if ok and dev then
+            hdState.dev = dev
+            if dev.getSize then
+                local okS, w, h = pcall(dev.getSize)
+                if okS then hdState.w, hdState.h = w or 0, h or 0 end
+            end
+            hdState.enabled = hdState.w > 0 and hdState.h > 0
+        end
+    end
+end
+
+-- Карта bytes→rgb для изображений страницы в HD режиме (заполняется в navigate).
+local hdImageCache = {}   -- key = absUrl.."#"..w.."x"..h → { bytes, w, h }
 
 -- Пропускать ли src через прокси: да для http(s) не-NFP, нет для data:/file:/ и уже-NFP.
 local function needsProxy(src)
@@ -260,6 +287,18 @@ if themeFromFile then
     THEME.link = THEME.link or THEME.link_fg or colors.blue
 end
 
+-- HD-режим: инициализируем рендерер, выбираем scale так, чтобы помещалось
+-- около 60 символов body-текста (при scale=1 это 512 px ≈ 4×1 блока).
+if hdrender and hdState.enabled and hdState.dev then
+    local desired = 64
+    local scale = 1
+    while scale < 4 and math.floor(hdState.w / (8 * scale)) > desired * 1.4 do
+        scale = scale + 1
+    end
+    pcall(hdrender.init, hdState.dev, THEME, { scale = scale, charPx = 8, linePx = 12 })
+    hdState.scale = scale
+end
+
 -- ---------------------------------------------------------------
 -- Геометрия
 -- ---------------------------------------------------------------
@@ -463,6 +502,19 @@ local function drawStatus(g)
     term.write(s)
 end
 
+-- HD-режим активен сейчас? (user-toggle + capability)
+local function hdActive()
+    return hdState.enabled and not hdState.forceOff and hdrender ~= nil
+end
+
+-- Перерисовка страницы на HDMonitor. Вызывается в составе redraw().
+local function hdRedraw()
+    if not hdActive() then return end
+    local tab = currentTab()
+    local boxes = tab.hdBoxes or tab.boxes or {}
+    pcall(hdrender.drawPage, boxes, tab.scrollY or 0, nil)
+end
+
 local function redraw()
     local g = layoutGeom()
     term.setBackgroundColor(THEME.bg)
@@ -471,6 +523,7 @@ local function redraw()
     drawChrome(g)
     drawContent(g)
     drawStatus(g)
+    hdRedraw()
 
     if appState.focus == "address" then
         local fieldW = g.urlFieldX2 - g.urlFieldX1 + 1
@@ -623,8 +676,58 @@ local function navigate(u, opts)
     tab.boxes       = boxes
     tab.totalHeight = total or #boxes
     tab.scrollY     = 0
-    tab.status      = string.format("ok (%d блоков, img: %d/%d, svg: %d)",
-        #boxes, _lastImgStats.rewritten, _lastImgStats.total, _lastImgStats.svg)
+    tab.status      = string.format("ok (%d блоков, img: %d/%d, svg: %d)%s",
+        #boxes, _lastImgStats.rewritten, _lastImgStats.total, _lastImgStats.svg,
+        hdActive() and (" [HD " .. hdState.w .. "x" .. hdState.h .. "]") or " [CC]")
+
+    -- HD-режим: пересчитываем layout для HD-ширины и параллельно грузим raw-RGB
+    -- картинки через /img_raw (только для боксов, где стоит _originalSrc).
+    if hdActive() and layout and layout.compute then
+        local hdCharsW = math.max(20, hdrender.charsPerLine())
+        local okHd, hdLres = pcall(layout.compute, dom, hdCharsW, { css = cssOpts, theme = THEME })
+        if okHd and hdLres then
+            tab.hdBoxes = hdLres.boxes or hdLres
+            tab.hdTotalHeight = hdLres.totalHeight or 0
+        end
+        -- Ленивая загрузка RGB для image-боксов. Базовый URL берём из _originalSrc,
+        -- ширину/высоту в пикселях — из box.w * charPx (scale учёт внутри hdrender).
+        if tab.hdBoxes and http and imageLib and imageLib.fetchRaw then
+            local urlEncode = (urlLib and urlLib.encode) or function(s)
+                return (s:gsub("[^%w%-_.~]", function(c)
+                    return string.format("%%%02X", string.byte(c))
+                end))
+            end
+            for _, b in ipairs(tab.hdBoxes) do
+                if b.type == "image" and (b.node and b.node.attrs and b.node.attrs._originalSrc) then
+                    local origSrc = b.node.attrs._originalSrc
+                    local absSrc = resolveImgUrl(origSrc, tab.url)
+                    local pxW = math.max(16, (b.w or 8) * 8 * (hdState.scale or 1))
+                    local pxH = math.max(16, (b.h or 4) * 12 * (hdState.scale or 1))
+                    -- Каппим, чтобы прокси не прибил.
+                    if pxW > 1024 then pxW = 1024 end
+                    if pxH > 512  then pxH = 512  end
+                    local cacheKey = absSrc .. "#" .. pxW .. "x" .. pxH
+                    if hdImageCache[cacheKey] then
+                        b._rgbBytes = hdImageCache[cacheKey].bytes
+                        b._rgbW = pxW; b._rgbH = pxH
+                    else
+                        b._pending = true
+                        local rawUrl = IMG_RAW_BASE .. "?url=" .. urlEncode(absSrc)
+                            .. "&w=" .. pxW .. "&h=" .. pxH
+                        local okF, img = pcall(imageLib.fetchRaw, rawUrl, pxW, pxH, http)
+                        if okF and img then
+                            hdImageCache[cacheKey] = { bytes = img.bytes, w = pxW, h = pxH }
+                            b._rgbBytes = img.bytes
+                            b._rgbW = pxW; b._rgbH = pxH
+                            b._pending = nil
+                        else
+                            b._pending = nil
+                        end
+                    end
+                end
+            end
+        end
+    end
 
     local title = extractTitle(dom) or tab.url
     tabs.setTitle(tab, title)
@@ -1003,10 +1106,20 @@ local function handleKey(k)
             appState.pageZoom = 1.0
             reflowCurrent(); return
         elseif k == keys.m then
-            -- Ctrl+M: mute / unmute audio
-            audioMuted = not audioMuted
-            if audioMuted then stopAudio() end
-            currentTab().status = audioMuted and "звук: выкл" or "звук: вкл"
+            if shiftDown then
+                -- Ctrl+Shift+M: mute / unmute audio
+                audioMuted = not audioMuted
+                if audioMuted then stopAudio() end
+                currentTab().status = audioMuted and "звук: выкл" or "звук: вкл"
+            else
+                -- Ctrl+M: HD-режим вкл/выкл (Day 7).
+                if not hdState.enabled then
+                    currentTab().status = "HDMonitor не найден"
+                else
+                    hdState.forceOff = not hdState.forceOff
+                    currentTab().status = hdState.forceOff and "HD: выкл" or "HD: вкл"
+                end
+            end
             return
         elseif k == keys.i then
             -- Ctrl+I: вкл/выкл авто-прокси картинок (PNG/JPG → NFP).
@@ -1246,6 +1359,26 @@ local function handleMouseClick(btn, x, y)
     end
 end
 
+-- HDMonitor touch (Day 7). Координаты пиксельные.
+local function handleMonitorTouch(pName, pxX, pxY)
+    if not hdActive() then return end
+    local tab = currentTab()
+    local boxes = tab.hdBoxes or tab.boxes
+    if not boxes or not hdrender or not hdrender.hitTest then return end
+    local box = hdrender.hitTest(boxes, pxX, pxY, tab.scrollY or 0, nil)
+    if not box then return end
+    if box.type == "link" and box.href then
+        if link and link.boxToAbsoluteUrl then
+            local abs = link.boxToAbsoluteUrl(box, tab.url or "")
+            navigate(abs or box.href)
+        else
+            navigate(box.href)
+        end
+    elseif box.type == "button" or box.type == "input" then
+        tab.status = "HD-клик: " .. box.type .. " — используйте CC-клавиатуру"
+    end
+end
+
 local function handleMouseScroll(dir, x, y)
     local g = layoutGeom()
     if y >= g.contentY1 and y <= g.contentY2 then
@@ -1288,6 +1421,8 @@ local function main()
             handleMouseClick(ev[2], ev[3], ev[4])
         elseif name == "mouse_scroll" then
             handleMouseScroll(ev[2], ev[3], ev[4])
+        elseif name == "monitor_touch" then
+            handleMonitorTouch(ev[2], ev[3], ev[4])
         elseif name == "term_resize" or name == "znatokos:window_resized" then
             -- Размер окна изменился (ресайз терминала, fullscreen toggle) —
             -- перестраиваем layout под новую ширину.

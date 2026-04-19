@@ -21,7 +21,7 @@ local BROADCAST_EVENTS = {
     terminate = true, timer = true, alarm = true, redstone = true,
     peripheral = true, peripheral_detach = true, rednet_message = true,
     modem_message = true, ["znatokos:resize"] = true, term_resize = true,
-    monitor_resize = true,
+    monitor_resize = true, monitor_touch = true,
 }
 
 local function hitWindow(x, y)
@@ -148,9 +148,19 @@ function M.run()
         local ev = { os.pullEventRaw() }
         if ev[1] == "terminate" then running = false; break end
 
-        -- monitor_touch (правый клик по монитору) = mouse_click кнопкой 1
+        -- monitor_touch (правый клик по монитору) = mouse_click кнопкой 1.
+        -- Исключение: hdmonitor (Day 7) — там координаты пиксельные, не символьные,
+        -- и событие нужно приложению как есть, чтобы оно могло вести raw hit-test
+        -- по HD-боксам. Определяем тип периферии по имени.
         if ev[1] == "monitor_touch" then
-            ev = { "mouse_click", 1, ev[3], ev[4] }
+            local isHd = false
+            if peripheral and ev[2] then
+                local ok, t = pcall(peripheral.getType, ev[2])
+                if ok and t == "hdmonitor" then isHd = true end
+            end
+            if not isHd then
+                ev = { "mouse_click", 1, ev[3], ev[4] }
+            end
         end
 
         -- peripheral / peripheral_detach передаём display для hot-plug.

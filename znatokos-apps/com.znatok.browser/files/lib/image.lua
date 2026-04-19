@@ -69,6 +69,25 @@ function M.fromString(s, fmt)
     return nil
 end
 
+-- Скачивание raw-RGB картинки для HDMonitor через /img_raw.
+-- Возвращает { kind="rgb", width, height, bytes } или nil, err.
+-- proxyBase — базовый URL прокси ("http://72.56.109.107:8088").
+-- Клиент сам формирует URL /img_raw?url=&w=&h= и передаёт сюда.
+function M.fetchRaw(rawUrl, w, h, httpLib)
+    if not httpLib then return nil, "http unavailable" end
+    local resp, err = httpLib.get(rawUrl, { timeout = 30, binary = true })
+    if not resp or not resp.body then return nil, err or "fetch failed" end
+    if resp.status and resp.status >= 400 then
+        return nil, "http " .. tostring(resp.status)
+    end
+    local body = resp.body
+    local expected = w * h * 3
+    if #body ~= expected then
+        return nil, ("raw size mismatch: got %d, need %d"):format(#body, expected)
+    end
+    return { kind = "rgb", width = w, height = h, bytes = body }
+end
+
 -- Отрисовка. win = term (или nil = текущий редирект).
 -- Используем "полупиксельный" рендер: 2 вертикальных пикселя → 1 cell через blit.
 -- Верхний пиксель = bg char ' ' с bg=topColor, нижний реализуем как... увы,

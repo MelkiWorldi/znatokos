@@ -1,9 +1,9 @@
 return {
     id = "com.znatok.browser",
     name = "Браузер",
-    version = "1.4.0",
+    version = "1.5.0",
     author = "znatok",
-    description = "Web-браузер: HTML+CSS, картинки NFP, динамическая палитра, вкладки, масштаб, звук",
+    description = "Web-браузер: HTML+CSS, картинки NFP, вкладки, масштаб, HDMonitor true-color режим",
     icon = { color = colors.lightBlue, glyph = "W" },
     entry = "main.lua",
     files = {
@@ -13,6 +13,7 @@ return {
         "lib/html.lua",
         "lib/layout.lua",
         "lib/render.lua",
+        "lib/hdrender.lua",
         "lib/link.lua",
         "lib/form.lua",
         "lib/js.lua",
@@ -24,7 +25,7 @@ return {
         "lib/image.lua",
         "themes/default.lua",
     },
-    capabilities = { "ui.window", "net.http", "fs.home", "periph.speaker" },
+    capabilities = { "ui.window", "net.http", "fs.home", "periph.speaker", "periph.advanced" },
     min_os_version = "0.3.0",
     deps = {},
 }
