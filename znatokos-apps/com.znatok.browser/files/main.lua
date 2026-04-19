@@ -72,6 +72,8 @@ local appState = {
     running   = true,
     altDown   = false,
     ctrlDown  = false,
+    pageZoom  = 1.0,          -- 0.5..2.0 — множитель ширины контента
+    fullscreen = false,       -- F11
 }
 appState.cursorPos = #appState.urlInput + 1
 
@@ -389,7 +391,7 @@ local function navigate(u, opts)
     tab.dom = dom
 
     local g = layoutGeom()
-    local contentW = g.w
+    local contentW = math.max(20, math.floor(g.w * (appState.pageZoom or 1.0)))
     local boxes, total
     -- Применяем CSS (собираем <style> блоки + inline styles).
     local rulesList = {}
@@ -506,7 +508,7 @@ local function openSpecialPage(content, pseudoUrl)
     tab.dom = dom
 
     local g = layoutGeom()
-    local contentW = g.w
+    local contentW = math.max(20, math.floor(g.w * (appState.pageZoom or 1.0)))
     local boxes, total
     -- Применяем CSS (собираем <style> блоки + inline styles).
     local rulesList = {}
@@ -669,6 +671,51 @@ end
 
 local shiftDown = false
 
+-- Пересчитать layout текущей вкладки с учётом текущего pageZoom.
+-- Вызывается при Ctrl+= / Ctrl+- / Ctrl+0 + F11.
+local function reflowCurrent()
+    local tab = currentTab()
+    if not tab or not tab.dom or not layout or not layout.compute then
+        redraw(); return
+    end
+    local g = layoutGeom()
+    local contentW = math.max(20, math.floor(g.w * (appState.pageZoom or 1.0)))
+    local cssOpts = nil
+    if css then
+        local rules = {}
+        for _, sn in ipairs((html and html.findAll and html.findAll(tab.dom, "style")) or {}) do
+            local txt = (html.getText and html.getText(sn)) or ""
+            local okP, parsed = pcall(css.parseStyleBlock, txt)
+            if okP and parsed then for _, r in ipairs(parsed) do rules[#rules+1] = r end end
+        end
+        cssOpts = { rulesList = rules, inlineParser = css.parseInline }
+    end
+    local okL, lres = pcall(layout.compute, tab.dom, contentW, { css = cssOpts, theme = THEME })
+    if okL and lres then
+        tab.boxes = lres.boxes or lres
+        tab.totalHeight = lres.totalHeight or 0
+        tab.scrollY = 0
+    end
+    tab.status = string.format("масштаб %.0f%%", (appState.pageZoom or 1.0) * 100)
+    redraw()
+end
+
+-- Переключить полноэкранный режим через оконный менеджер.
+local function toggleFullscreen()
+    local winApi = znatokos and znatokos.app and znatokos.app.window
+    if not winApi then return end
+    if appState.fullscreen then
+        winApi.restore()
+        appState.fullscreen = false
+        currentTab().status = "обычный размер"
+    else
+        winApi.maximize()
+        appState.fullscreen = true
+        currentTab().status = "полный экран (F11)"
+    end
+    -- term_resize обработчик внизу вызовет redraw — пересчитает и layout
+end
+
 local function handleKey(k)
     if k == keys.escape then
         appState.running = false
@@ -715,7 +762,25 @@ local function handleKey(k)
         elseif k == keys.h then
             openBookmarksPage()
             return
+        elseif k == keys.equals or k == keys.numPadAdd then
+            -- Ctrl+= или Ctrl+Plus: увеличить ширину контента ("zoom out")
+            appState.pageZoom = math.min(2.0, (appState.pageZoom or 1.0) + 0.1)
+            reflowCurrent(); return
+        elseif k == keys.minus or k == keys.numPadSubtract then
+            -- Ctrl+-: уменьшить ширину контента ("zoom in")
+            appState.pageZoom = math.max(0.5, (appState.pageZoom or 1.0) - 0.1)
+            reflowCurrent(); return
+        elseif k == keys.zero or k == keys.numPad0 then
+            -- Ctrl+0: сбросить масштаб
+            appState.pageZoom = 1.0
+            reflowCurrent(); return
         end
+    end
+
+    -- F11 — полноэкранный режим (максимизация окна)
+    if k == keys.f11 then
+        toggleFullscreen()
+        return
     end
 
     if k == keys.tab then
@@ -952,8 +1017,10 @@ local function main()
             handleMouseClick(ev[2], ev[3], ev[4])
         elseif name == "mouse_scroll" then
             handleMouseScroll(ev[2], ev[3], ev[4])
-        elseif name == "term_resize" then
-            -- перерисуем
+        elseif name == "term_resize" or name == "znatokos:window_resized" then
+            -- Размер окна изменился (ресайз терминала, fullscreen toggle) —
+            -- перестраиваем layout под новую ширину.
+            reflowCurrent()
         end
         redraw()
     end
