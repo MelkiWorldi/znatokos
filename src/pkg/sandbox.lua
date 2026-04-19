@@ -443,7 +443,23 @@ function M.build(opts)
                 return chunk()
             end
         end
-        -- затем в whitelist
+        -- Разрешённые по умолчанию безопасные префиксы: UI-хелперы и утилиты.
+        -- Это чистые модули без fs/net/periph побочных эффектов.
+        local SAFE_PREFIXES = { "ui/", "util/" }
+        local SAFE_EXACT    = { "fs/vfs", "fs/paths" }  -- VFS только для getUser
+        local allowed = false
+        for _, p in ipairs(SAFE_PREFIXES) do
+            if modulePath:sub(1, #p) == p then allowed = true; break end
+        end
+        if not allowed then
+            for _, m in ipairs(SAFE_EXACT) do
+                if modulePath == m then allowed = true; break end
+            end
+        end
+        if allowed then
+            return znatokos.use(modulePath)
+        end
+        -- затем явный whitelist из opts
         for i = 1, #allowedModules do
             if allowedModules[i] == modulePath then
                 return znatokos.use(modulePath)
